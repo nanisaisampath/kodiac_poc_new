@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frame Navigation Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .test-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .frame-slider-container {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+            display: block;
+        }
+
+        .frame-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 5px 0;
+        }
+
+        .frame-btn {
+            background-color: #338dcc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            width: 32px;
+            height: 32px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: background-color 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .frame-btn:hover {
+            background-color: #0c2130;
+        }
+
+        .frame-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .frame-slider {
+            flex: 1;
+            margin: 0;
+        }
+
+        .frame-info {
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .frame-help {
+            text-align: center;
+            font-size: 10px;
+            color: #999;
+            margin-top: 3px;
+            font-style: italic;
+        }
+        
+        .test-info {
+            background-color: #e3f2fd;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        
+        .keyboard-info {
+            background-color: #fff3e0;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        
+        .key {
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            padding: 2px 6px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>Frame Navigation Test</h1>
+        
+        <div class="test-info">
+            <h3>Test Instructions:</h3>
+            <ol>
+                <li>Use the slider to change frames</li>
+                <li>Click the + and - buttons to navigate</li>
+                <li>Use keyboard shortcuts (see below)</li>
+                <li>Verify that buttons are disabled at boundaries</li>
+            </ol>
+        </div>
+        
+        <div class="keyboard-info">
+            <h3>Keyboard Shortcuts:</h3>
+            <ul>
+                <li><span class="key">←</span> (Left Arrow): Previous frame</li>
+                <li><span class="key">→</span> (Right Arrow): Next frame</li>
+                <li><span class="key">Home</span>: First frame</li>
+                <li><span class="key">End</span>: Last frame</li>
+            </ul>
+        </div>
+        
+        <h3>Test Frame Slider (10 frames)</h3>
+        <div class="frame-slider-container">
+            <label for="testFrameSlider">Frame:</label>
+            <div class="frame-controls">
+                <button class="frame-btn" onclick="previousFrame(1)" title="Previous Frame">
+                    <i class="fas fa-minus"></i>
+                </button>
+                <input
+                    type="range"
+                    id="testFrameSlider"
+                    class="frame-slider"
+                    min="0"
+                    max="9"
+                    value="0"
+                />
+                <button class="frame-btn" onclick="nextFrame(1)" title="Next Frame">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+            <div class="frame-info" id="testFrameInfo">Frame 1 of 10</div>
+            <div class="frame-help">Use ← → arrows or click ± buttons</div>
+        </div>
+        
+        <h3>Test Frame Slider (1 frame - buttons should be disabled)</h3>
+        <div class="frame-slider-container">
+            <label for="testFrameSlider2">Frame:</label>
+            <div class="frame-controls">
+                <button class="frame-btn" onclick="previousFrame(2)" title="Previous Frame">
+                    <i class="fas fa-minus"></i>
+                </button>
+                <input
+                    type="range"
+                    id="testFrameSlider2"
+                    class="frame-slider"
+                    min="0"
+                    max="0"
+                    value="0"
+                />
+                <button class="frame-btn" onclick="nextFrame(2)" title="Next Frame">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+            <div class="frame-info" id="testFrameInfo2">Frame 1 of 1</div>
+            <div class="frame-help">Use ← → arrows or click ± buttons</div>
+        </div>
+    </div>
+
+    <script>
+        // Mock data for testing
+        const currentFrames = { 1: 0, 2: 0 };
+        const totalFrames = { 1: 10, 2: 1 };
+        
+        // Update frame button states
+        function updateFrameButtonStates(viewportNumber) {
+            const currentFrame = currentFrames[viewportNumber] || 0;
+            const totalFramesCount = totalFrames[viewportNumber] || 0;
+            
+            const container = document.querySelector(`#testFrameSlider${viewportNumber === 2 ? '2' : ''}`).closest('.frame-slider-container');
+            const prevBtn = container.querySelector('.frame-btn:first-child');
+            const nextBtn = container.querySelector('.frame-btn:last-child');
+            
+            if (prevBtn) {
+                prevBtn.disabled = currentFrame <= 0;
+            }
+            
+            if (nextBtn) {
+                nextBtn.disabled = currentFrame >= totalFramesCount - 1;
+            }
+        }
+        
+        // Update frame info
+        function updateFrameInfo(viewportNumber, frameNumber) {
+            const frameInfo = document.getElementById(`testFrameInfo${viewportNumber === 2 ? '2' : ''}`);
+            if (frameInfo) {
+                const totalFramesCount = totalFrames[viewportNumber];
+                frameInfo.textContent = `Frame ${frameNumber + 1} of ${totalFramesCount}`;
+            }
+            
+            // Update button states
+            updateFrameButtonStates(viewportNumber);
+        }
+        
+        // Navigate to previous frame
+        function previousFrame(viewportNumber) {
+            const currentFrame = currentFrames[viewportNumber] || 0;
+            
+            if (currentFrame <= 0) {
+                console.log(`Already at first frame for viewport ${viewportNumber}`);
+                return;
+            }
+            
+            const newFrame = currentFrame - 1;
+            currentFrames[viewportNumber] = newFrame;
+            
+            // Update slider value
+            const frameSlider = document.getElementById(`testFrameSlider${viewportNumber === 2 ? '2' : ''}`);
+            if (frameSlider) {
+                frameSlider.value = newFrame;
+            }
+            
+            // Update frame info
+            updateFrameInfo(viewportNumber, newFrame);
+            
+            console.log(`Navigated to previous frame: ${newFrame} for viewport ${viewportNumber}`);
+        }
+        
+        // Navigate to next frame
+        function nextFrame(viewportNumber) {
+            const currentFrame = currentFrames[viewportNumber] || 0;
+            const totalFramesCount = totalFrames[viewportNumber] || 0;
+            
+            if (currentFrame >= totalFramesCount - 1) {
+                console.log(`Already at last frame for viewport ${viewportNumber}`);
+                return;
+            }
+            
+            const newFrame = currentFrame + 1;
+            currentFrames[viewportNumber] = newFrame;
+            
+            // Update slider value
+            const frameSlider = document.getElementById(`testFrameSlider${viewportNumber === 2 ? '2' : ''}`);
+            if (frameSlider) {
+                frameSlider.value = newFrame;
+            }
+            
+            // Update frame info
+            updateFrameInfo(viewportNumber, newFrame);
+            
+            console.log(`Navigated to next frame: ${newFrame} for viewport ${viewportNumber}`);
+        }
+        
+        // Setup slider event listeners
+        document.getElementById('testFrameSlider').addEventListener('input', function(e) {
+            const frameNumber = parseInt(e.target.value);
+            currentFrames[1] = frameNumber;
+            updateFrameInfo(1, frameNumber);
+        });
+        
+        document.getElementById('testFrameSlider2').addEventListener('input', function(e) {
+            const frameNumber = parseInt(e.target.value);
+            currentFrames[2] = frameNumber;
+            updateFrameInfo(2, frameNumber);
+        });
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(event) {
+            if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+                return;
+            }
+            
+            let activeViewport = 1; // Default to viewport 1
+            
+            switch (event.key) {
+                case 'ArrowLeft':
+                    event.preventDefault();
+                    previousFrame(activeViewport);
+                    break;
+                case 'ArrowRight':
+                    event.preventDefault();
+                    nextFrame(activeViewport);
+                    break;
+                case 'Home':
+                    event.preventDefault();
+                    const firstFrame = 0;
+                    currentFrames[activeViewport] = firstFrame;
+                    const frameSlider = document.getElementById('testFrameSlider');
+                    if (frameSlider) {
+                        frameSlider.value = firstFrame;
+                    }
+                    updateFrameInfo(activeViewport, firstFrame);
+                    break;
+                case 'End':
+                    event.preventDefault();
+                    const totalFramesCount = totalFrames[activeViewport] || 0;
+                    const lastFrame = Math.max(0, totalFramesCount - 1);
+                    currentFrames[activeViewport] = lastFrame;
+                    const frameSlider2 = document.getElementById('testFrameSlider');
+                    if (frameSlider2) {
+                        frameSlider2.value = lastFrame;
+                    }
+                    updateFrameInfo(activeViewport, lastFrame);
+                    break;
+            }
+        });
+        
+        // Initialize button states
+        updateFrameButtonStates(1);
+        updateFrameButtonStates(2);
+    </script>
+</body>
+</html> 
