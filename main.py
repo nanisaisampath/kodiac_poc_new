@@ -385,16 +385,40 @@ async def get_file_crc(path: str = Query(...)):
         if not os.path.exists(path):
             # This is likely an S3 path, use S3 CRC calculation
             try:
-                from riv_desktop.s3_api import calculate_s3_object_crc, s3, bucket_name
+                from riv_desktop.s3_api import s3, bucket_name
                 if s3 and bucket_name:
-                    file_crc = calculate_s3_object_crc(s3, bucket_name, path)
+                    # Use the SAME method as download_dicom_from_s3
+                    try:
+                        head_response = s3.head_object(Bucket=bucket_name, Key=path)
+                        file_size = head_response.get('ContentLength', 0)
+                        last_modified = head_response.get('LastModified', '').isoformat() if head_response.get('LastModified') else ''
+                        etag = head_response.get('ETag', '').strip('"')
+                        
+                        # Calculate CRC based on file metadata (SAME as S3 download)
+                        metadata_str = f"{path}:{etag}:{last_modified}:{file_size}"
+                        file_crc = format(zlib.crc32(metadata_str.encode('utf-8')) & 0xFFFFFFFF, '08x')
+                        
+                        CRC_CACHE[path] = file_crc
+                        logger.info(f"Generated S3 metadata CRC for {path}: {file_crc}")
+                        return {"crc": file_crc, "source": "s3_metadata"}
+                    except Exception as head_error:
+                        logger.warning(f"S3 head_object failed for {path}: {str(head_error)}")
+                        # Fallback to path-only CRC
+                        file_crc = format(zlib.crc32(path.encode('utf-8')) & 0xFFFFFFFF, '08x')
+                        CRC_CACHE[path] = file_crc
+                        logger.info(f"Generated fallback CRC for {path}: {file_crc}")
+                        return {"crc": file_crc, "source": "fallback"}
+                else:
+                    logger.warning(f"S3 client not available for CRC calculation")
+                    # Fallback to path-only CRC
+                    file_crc = format(zlib.crc32(path.encode('utf-8')) & 0xFFFFFFFF, '08x')
                     CRC_CACHE[path] = file_crc
-                    logger.info(f"Generated S3 CRC for {path}: {file_crc}")
-                    return {"crc": file_crc, "source": "s3_metadata"}
+                    logger.info(f"Generated fallback CRC for {path}: {file_crc}")
+                    return {"crc": file_crc, "source": "fallback"}
             except Exception as s3_error:
                 logger.warning(f"S3 CRC calculation failed for {path}: {str(s3_error)}")
                 # Fallback to path-only CRC
-                file_crc = calculate_content_crc32(path.encode('utf-8'))
+                file_crc = format(zlib.crc32(path.encode('utf-8')) & 0xFFFFFFFF, '08x')
                 CRC_CACHE[path] = file_crc
                 logger.info(f"Generated fallback CRC for {path}: {file_crc}")
                 return {"crc": file_crc, "source": "fallback"}
@@ -3388,4 +3412,44 @@ async def debug_stored_images():
         })
     except Exception as e:
         logger.error(f"Error in debug endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@app.get("/api/debug_crc_calculation")
+async def debug_crc_calculation(path: str = Query(...)):
+    """Debug endpoint to test CRC calculation for an S3 path."""
+    try:
+        from riv_desktop.s3_api import s3, bucket_name
+        
+        if not s3 or not bucket_name:
+            return {"error": "S3 not configured"}
+        
+        # Test the same calculation used in download_dicom_from_s3
+        try:
+            head_response = s3.head_object(Bucket=bucket_name, Key=path)
+            file_size = head_response.get('ContentLength', 0)
+            last_modified = head_response.get('LastModified', '').isoformat() if head_response.get('LastModified') else ''
+            etag = head_response.get('ETag', '').strip('"')
+            
+            metadata_str = f"{path}:{etag}:{last_modified}:{file_size}"
+            s3_metadata_crc = format(zlib.crc32(metadata_str.encode('utf-8')) & 0xFFFFFFFF, '08x')
+            
+            # Also calculate path-only CRC for comparison
+            path_only_crc = format(zlib.crc32(path.encode('utf-8')) & 0xFFFFFFFF, '08x')
+            
+            return {
+                "path": path,
+                "s3_metadata_crc": s3_metadata_crc,
+                "path_only_crc": path_only_crc,
+                "metadata_string": metadata_str,
+                "file_size": file_size,
+                "etag": etag,
+                "last_modified": last_modified,
+                "match": s3_metadata_crc == path_only_crc
+            }
+        except Exception as e:
+            return {"error": f"S3 head_object failed: {str(e)}"}
+            
+    except Exception as e:
+        logger.error(f"Error in CRC debug endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
