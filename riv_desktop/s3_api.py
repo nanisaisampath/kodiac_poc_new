@@ -359,7 +359,7 @@ async def download_dicom_from_s3(path: str = Query(...)):
         last_modified = head_response.get('LastModified', '').isoformat() if head_response.get('LastModified') else ''
         etag = head_response.get('ETag', '').strip('"')
         
-        # Calculate CRC based on file metadata (same as save-to-cache)
+        # Calculate CRC based on file metadata
         metadata_str = f"{path}:{etag}:{last_modified}:{file_size}"
         crc = format(zlib.crc32(metadata_str.encode('utf-8')) & 0xFFFFFFFF, '08x')
         
