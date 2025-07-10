@@ -107,11 +107,25 @@ bucket_name = None
 if env_credentials_present():
     print("[S3 INIT] Using credentials from .env")
     try:
+        # Configure S3 client with proper timeouts and retries
+        from botocore.config import Config
+        
+        config = Config(
+            region_name=os.getenv("AWS_DEFAULT_REGION"),
+            retries={
+                'max_attempts': 10,
+                'mode': 'adaptive'
+            },
+            max_pool_connections=50,
+            connect_timeout=60,
+            read_timeout=60
+        )
+        
         s3 = boto3.client(
             "s3",
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            region_name=os.getenv("AWS_DEFAULT_REGION")
+            config=config
         )
         bucket_name = os.getenv("AWS_S3_BUCKET")
         print(f"[S3 INIT] Connected to bucket: {bucket_name}")
@@ -167,12 +181,25 @@ async def set_s3_credentials(request: Request):
         if not all([access_key, secret_key, region, bucket]):
             raise HTTPException(status_code=400, detail="All fields are required")
         
-        # Test the credentials
+        # Test the credentials with proper timeout configuration
+        from botocore.config import Config
+        
+        config = Config(
+            region_name=region,
+            retries={
+                'max_attempts': 10,
+                'mode': 'adaptive'
+            },
+            max_pool_connections=50,
+            connect_timeout=60,
+            read_timeout=60
+        )
+        
         test_s3 = boto3.client(
             's3',
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
-            region_name=region
+            config=config
         )
         
         # Test connection
@@ -434,15 +461,33 @@ async def download_dicom_from_s3(path: str = Query(...)):
 
     logger.info(f"Downloading {path} from S3 into memory")
     try:
+        # Use streaming download with chunked reading to avoid timeouts
         obj = s3.get_object(Bucket=bucket_name, Key=path)
-        file_bytes = obj['Body'].read()  # Read the full content into memory
+        
+        # Create temp file first
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
+            temp_path = tmp.name
+            
+            # Stream download in chunks to avoid timeout issues
+            chunk_size = 1024 * 1024  # 1MB chunks
+            total_size = obj.get('ContentLength', 0)
+            downloaded_size = 0
+            
+            logger.info(f"Starting chunked download of {total_size} bytes")
+            
+            for chunk in obj['Body'].iter_chunks(chunk_size=chunk_size):
+                tmp.write(chunk)
+                downloaded_size += len(chunk)
+                if total_size > 0:
+                    progress = (downloaded_size / total_size) * 100
+                    if downloaded_size % (10 * 1024 * 1024) == 0:  # Log every 10MB
+                        logger.info(f"Download progress: {progress:.1f}% ({downloaded_size}/{total_size} bytes)")
+            
+            logger.info(f"Download complete: {downloaded_size} bytes")
+            
     except Exception as e:
         logger.error(f"Failed to get S3 object: {str(e)}")
         raise HTTPException(status_code=404, detail=f"Failed to download file: {str(e)}")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
-        tmp.write(file_bytes)
-        temp_path = tmp.name
 
     logger.info(f"Downloaded and saved to temp file: {temp_path}")
 
@@ -457,17 +502,28 @@ async def download_dicom_from_s3(path: str = Query(...)):
     cleanup_old_memory_entries()
 
     try:
+        # Process the file and ensure S3 path mapping is updated after processing
+        result = None
         if file_extension in ['.dcm', '.dicom']:
-            return process_dicom_file(temp_path, key, crc)
+            result = process_dicom_file(temp_path, key, crc)
         elif file_extension == '.e2e':
-            return process_e2e_file(temp_path, key, crc)
+            result = process_e2e_file(temp_path, key, crc)
         elif file_extension in ['.fds']:
-            return process_fds_file(temp_path, key, crc)
+            result = process_fds_file(temp_path, key, crc)
         elif file_extension in ['.fda']:
-            return process_fda_file(temp_path, key, crc)
+            result = process_fda_file(temp_path, key, crc)
         else:
             os.remove(temp_path)
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_extension}")
+        
+        # ENSURE S3 path mapping is updated after processing completes
+        # This guarantees the frontend can access the file immediately
+        if path not in stored_images and key in stored_images:
+            stored_images[path] = stored_images[key]
+            logger.info(f"[POST-PROCESSING] Ensured S3 path '{path}' is mapped to processed key '{key}'")
+        
+        return result
+        
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
