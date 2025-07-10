@@ -81,14 +81,14 @@ async def shutdown_event():
 stored_images = {}
 
 # S3 API Router - import after defining stored_images
-from riv_desktop.s3_api import router as s3_router, get_current_s3_status, update_s3_credentials
+from riv_desktop.s3_api import router as s3_router, get_s3_status, update_s3_credentials
 
 app.include_router(s3_router)
 
-# Function to get current S3 status
-def get_s3_status():
+# Function to get current S3 status from the s3_api module
+async def get_current_s3_status():
     """Get current S3 status from the s3_api module"""
-    return get_current_s3_status()
+    return await get_s3_status()
 
 # Function to update S3 credentials from main module
 def update_s3_credentials_from_main(access_key, secret_key, region, bucket):
@@ -384,18 +384,34 @@ async def get_file_crc(path: str = Query(...)):
             logger.info(f"Returning cached CRC for {path}: {CRC_CACHE[path]}")
             return {"crc": CRC_CACHE[path], "source": "cache"}
 
-        # Try to get file metadata if local
-        metadata = None
-        if os.path.exists(path):
-            stat = os.stat(path)
-            metadata = {
-                'size': stat.st_size,
-                'last_modified': str(stat.st_mtime)
-            }
+        # For S3 paths, use the S3 CRC calculation method to ensure consistency
+        if not os.path.exists(path):
+            # This is likely an S3 path, use S3 CRC calculation
+            try:
+                from riv_desktop.s3_api import calculate_s3_object_crc, s3, bucket_name
+                if s3 and bucket_name:
+                    file_crc = calculate_s3_object_crc(s3, bucket_name, path)
+                    CRC_CACHE[path] = file_crc
+                    logger.info(f"Generated S3 CRC for {path}: {file_crc}")
+                    return {"crc": file_crc, "source": "s3_metadata"}
+            except Exception as s3_error:
+                logger.warning(f"S3 CRC calculation failed for {path}: {str(s3_error)}")
+                # Fallback to path-only CRC
+                file_crc = calculate_content_crc32(path.encode('utf-8'))
+                CRC_CACHE[path] = file_crc
+                logger.info(f"Generated fallback CRC for {path}: {file_crc}")
+                return {"crc": file_crc, "source": "fallback"}
+
+        # For local files, use file metadata
+        stat = os.stat(path)
+        metadata = {
+            'size': stat.st_size,
+            'last_modified': str(stat.st_mtime)
+        }
         file_crc = get_file_crc_from_metadata(path, metadata)
         CRC_CACHE[path] = file_crc
-        logger.info(f"Generated CRC for {path}: {file_crc}")
-        return {"crc": file_crc, "source": "generated"}
+        logger.info(f"Generated local file CRC for {path}: {file_crc}")
+        return {"crc": file_crc, "source": "local_metadata"}
     except Exception as e:
         logger.error(f"Error getting CRC for {path}: {str(e)}")
         raise HTTPException(status_code=500,
@@ -2074,12 +2090,29 @@ async def view_dicom_png(frame: int = Query(...),
 
     try:
         if dicom_file_path not in stored_images:
+            logger.error(f"DICOM file {dicom_file_path} not found in memory. Available keys: {list(stored_images.keys())}")
             raise HTTPException(status_code=404,
                                 detail="DICOM file not found in memory.")
-        logger.info(
-            f"Retrieving frame {frame} from DICOM file {dicom_file_path}")
-
+        
+        logger.info(f"Retrieving frame {frame} from DICOM file {dicom_file_path}")
         data = stored_images[dicom_file_path]
+        
+        # Check if the file is still being processed (only has metadata, no frame data)
+        frame_keys = [k for k in data.keys() if isinstance(k, int)]
+        if not frame_keys and "local_path" in data:
+            logger.warning(f"File {dicom_file_path} is still being processed. No frames available yet.")
+            raise HTTPException(status_code=202, detail="File is still being processed. Please try again in a moment.")
+        
+        if not frame_keys:
+            logger.error(f"No frame data found for {dicom_file_path}. Available keys: {list(data.keys())}")
+            raise HTTPException(status_code=404, detail="No frame data available.")
+        
+        logger.info(f"Found {len(frame_keys)} frames for {dicom_file_path}")
+        
+        # Validate requested frame exists
+        if frame not in data:
+            logger.error(f"Frame {frame} not found. Available frames: {frame_keys}")
+            raise HTTPException(status_code=404, detail=f"Frame {frame} not found. Available frames: {frame_keys}")
 
         # Check if this is an OCT/FDA/FDS and if the requested frame is the middle frame
         is_oct = data.get("is_oct", False)
@@ -2135,8 +2168,6 @@ async def view_dicom_png(frame: int = Query(...),
                 return StreamingResponse(flattened_buffer, media_type="image/png", headers=headers)
 
         # Default: serve the original frame as before
-        if frame not in data:
-            raise HTTPException(status_code=404, detail="Frame not found.")
         logger.info(
             f"Frame {frame} found in stored images for {dicom_file_path}")
 
@@ -3348,9 +3379,16 @@ async def debug_stored_images():
                 "is_fds": data.get("is_fds", False),
                 "file_type": data.get("file_type", "unknown"),
                 "timestamp": data.get("timestamp", 0),
-                "crc": data.get("crc", "unknown")
+                "crc": data.get("crc", "unknown"),
+                "s3_key": data.get("s3_key", "none"),
+                "local_path": data.get("local_path", "none")
             }
-        return JSONResponse(content=debug_info)
+        return JSONResponse(content={
+            "total_entries": len(stored_images),
+            "stored_images": debug_info,
+            "crc_cache_entries": len(CRC_CACHE),
+            "crc_cache": dict(list(CRC_CACHE.items())[:10]) if CRC_CACHE else {}  # Show first 10 CRC entries
+        })
     except Exception as e:
         logger.error(f"Error in debug endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
