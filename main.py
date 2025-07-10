@@ -81,7 +81,7 @@ async def shutdown_event():
 stored_images = {}
 
 # S3 API Router - import after defining stored_images
-from riv_desktop.s3_api import router as s3_router, get_s3_status, update_s3_credentials
+from riv_desktop.s3_api import router as s3_router, get_s3_status
 
 app.include_router(s3_router)
 
@@ -90,10 +90,7 @@ async def get_current_s3_status():
     """Get current S3 status from the s3_api module"""
     return await get_s3_status()
 
-# Function to update S3 credentials from main module
-def update_s3_credentials_from_main(access_key, secret_key, region, bucket):
-    """Update S3 credentials from main module"""
-    return update_s3_credentials(access_key, secret_key, region, bucket)
+# S3 credentials are managed through the /api/set-s3-credentials endpoint in s3_api.py
 
 # Performance optimization: Add connection pooling and caching
 import asyncio
