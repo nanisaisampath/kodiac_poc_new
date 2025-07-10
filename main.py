@@ -384,18 +384,34 @@ async def get_file_crc(path: str = Query(...)):
             logger.info(f"Returning cached CRC for {path}: {CRC_CACHE[path]}")
             return {"crc": CRC_CACHE[path], "source": "cache"}
 
-        # Try to get file metadata if local
-        metadata = None
-        if os.path.exists(path):
-            stat = os.stat(path)
-            metadata = {
-                'size': stat.st_size,
-                'last_modified': str(stat.st_mtime)
-            }
+        # For S3 paths, use the S3 CRC calculation method to ensure consistency
+        if not os.path.exists(path):
+            # This is likely an S3 path, use S3 CRC calculation
+            try:
+                from riv_desktop.s3_api import calculate_s3_object_crc, s3, bucket_name
+                if s3 and bucket_name:
+                    file_crc = calculate_s3_object_crc(s3, bucket_name, path)
+                    CRC_CACHE[path] = file_crc
+                    logger.info(f"Generated S3 CRC for {path}: {file_crc}")
+                    return {"crc": file_crc, "source": "s3_metadata"}
+            except Exception as s3_error:
+                logger.warning(f"S3 CRC calculation failed for {path}: {str(s3_error)}")
+                # Fallback to path-only CRC
+                file_crc = calculate_content_crc32(path.encode('utf-8'))
+                CRC_CACHE[path] = file_crc
+                logger.info(f"Generated fallback CRC for {path}: {file_crc}")
+                return {"crc": file_crc, "source": "fallback"}
+
+        # For local files, use file metadata
+        stat = os.stat(path)
+        metadata = {
+            'size': stat.st_size,
+            'last_modified': str(stat.st_mtime)
+        }
         file_crc = get_file_crc_from_metadata(path, metadata)
         CRC_CACHE[path] = file_crc
-        logger.info(f"Generated CRC for {path}: {file_crc}")
-        return {"crc": file_crc, "source": "generated"}
+        logger.info(f"Generated local file CRC for {path}: {file_crc}")
+        return {"crc": file_crc, "source": "local_metadata"}
     except Exception as e:
         logger.error(f"Error getting CRC for {path}: {str(e)}")
         raise HTTPException(status_code=500,
@@ -3363,9 +3379,16 @@ async def debug_stored_images():
                 "is_fds": data.get("is_fds", False),
                 "file_type": data.get("file_type", "unknown"),
                 "timestamp": data.get("timestamp", 0),
-                "crc": data.get("crc", "unknown")
+                "crc": data.get("crc", "unknown"),
+                "s3_key": data.get("s3_key", "none"),
+                "local_path": data.get("local_path", "none")
             }
-        return JSONResponse(content=debug_info)
+        return JSONResponse(content={
+            "total_entries": len(stored_images),
+            "stored_images": debug_info,
+            "crc_cache_entries": len(CRC_CACHE),
+            "crc_cache": dict(list(CRC_CACHE.items())[:10]) if CRC_CACHE else {}  # Show first 10 CRC entries
+        })
     except Exception as e:
         logger.error(f"Error in debug endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
