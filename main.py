@@ -2074,12 +2074,29 @@ async def view_dicom_png(frame: int = Query(...),
 
     try:
         if dicom_file_path not in stored_images:
+            logger.error(f"DICOM file {dicom_file_path} not found in memory. Available keys: {list(stored_images.keys())}")
             raise HTTPException(status_code=404,
                                 detail="DICOM file not found in memory.")
-        logger.info(
-            f"Retrieving frame {frame} from DICOM file {dicom_file_path}")
-
+        
+        logger.info(f"Retrieving frame {frame} from DICOM file {dicom_file_path}")
         data = stored_images[dicom_file_path]
+        
+        # Check if the file is still being processed (only has metadata, no frame data)
+        frame_keys = [k for k in data.keys() if isinstance(k, int)]
+        if not frame_keys and "local_path" in data:
+            logger.warning(f"File {dicom_file_path} is still being processed. No frames available yet.")
+            raise HTTPException(status_code=202, detail="File is still being processed. Please try again in a moment.")
+        
+        if not frame_keys:
+            logger.error(f"No frame data found for {dicom_file_path}. Available keys: {list(data.keys())}")
+            raise HTTPException(status_code=404, detail="No frame data available.")
+        
+        logger.info(f"Found {len(frame_keys)} frames for {dicom_file_path}")
+        
+        # Validate requested frame exists
+        if frame not in data:
+            logger.error(f"Frame {frame} not found. Available frames: {frame_keys}")
+            raise HTTPException(status_code=404, detail=f"Frame {frame} not found. Available frames: {frame_keys}")
 
         # Check if this is an OCT/FDA/FDS and if the requested frame is the middle frame
         is_oct = data.get("is_oct", False)
@@ -2135,8 +2152,6 @@ async def view_dicom_png(frame: int = Query(...),
                 return StreamingResponse(flattened_buffer, media_type="image/png", headers=headers)
 
         # Default: serve the original frame as before
-        if frame not in data:
-            raise HTTPException(status_code=404, detail="Frame not found.")
         logger.info(
             f"Frame {frame} found in stored images for {dicom_file_path}")
 
