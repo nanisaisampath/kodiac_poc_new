@@ -214,6 +214,7 @@ def save_to_cache(crc: str, data: dict, file_type: str, file_info: dict):
 
         logger.info(
             f"Successfully cached {frames_saved} frames for CRC: {crc}")
+        logger.info(f"Saving to cache directory: {cache_path}")
         return frames_saved > 0
 
     except Exception as e:
@@ -1393,7 +1394,7 @@ def process_dicom_file(file_path: str, key: str, crc: str):
         try:
             cache_data = {
                 k: v
-                for k, v in stored_images[crc].items() if isinstance(k, int)
+                for k, v in stored_images[key].items() if isinstance(k, int)
             }
             file_info = {
                 "name": os.path.basename(file_path),
