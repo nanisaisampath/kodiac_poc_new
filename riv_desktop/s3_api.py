@@ -384,10 +384,6 @@ async def download_dicom_from_s3(path: str = Query(...)):
             stored_images[key]["crc"] = crc
             stored_images[key]["s3_key"] = path
             
-            # IMMEDIATELY map S3 path to the key for instant frontend access
-            stored_images[path] = stored_images[key]
-            logger.info(f"[IMMEDIATE S3 MAPPING] Mapped S3 path '{path}' to cache key '{key}' for instant access")
-            
             # Handle E2E files specially
             if cached_images.get("file_type") == "e2e":
                 # Count total images for E2E files
@@ -428,11 +424,6 @@ async def download_dicom_from_s3(path: str = Query(...)):
             value.get("crc") == crc
         ):
             logger.info(f"Memory cache hit for {path} (CRC: {crc})")
-            
-            # IMMEDIATELY map S3 path if not already mapped
-            if path not in stored_images:
-                stored_images[path] = stored_images[key]
-                logger.info(f"[IMMEDIATE S3 MAPPING] Mapped S3 path '{path}' to existing key '{key}' for instant access")
             
             # Handle E2E files specially
             if value.get("file_type") == "e2e":
@@ -506,11 +497,6 @@ async def download_dicom_from_s3(path: str = Query(...)):
         "timestamp": time.time(),
         "crc": crc
     }
-    
-    # IMMEDIATELY map S3 path to the key for instant frontend access
-    # This ensures the frontend can find the file even while processing is ongoing
-    stored_images[path] = stored_images[key]
-    logger.info(f"[IMMEDIATE S3 MAPPING] Mapped S3 path '{path}' to processing key '{key}' for instant access")
     
     # Clean up old entries to prevent memory leaks
     cleanup_old_memory_entries()
