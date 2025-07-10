@@ -1165,6 +1165,12 @@ def process_dicom_file(file_path: str, key: str, crc: str):
     logger.info(f"Processing DICOM file: {file_path}")
     logger.info(f"[process_dicom_file] Using CRC key: {crc} for file_path: {file_path}")
     try:
+        # Check if this file has an S3 key that needs immediate mapping
+        s3_key = None
+        if key in stored_images and "s3_key" in stored_images[key]:
+            s3_key = stored_images[key]["s3_key"]
+            logger.info(f"Found S3 key for mapping: {s3_key}")
+
         # Check CRC-based cache first
         cache_path = get_cache_path(crc)
         if cache_path.exists():
@@ -1182,6 +1188,10 @@ def process_dicom_file(file_path: str, key: str, crc: str):
                 # IMMEDIATELY map the file_path to the CRC key for UI access
                 stored_images[file_path] = stored_images[crc]
                 logger.info(f"[IMMEDIATE] Mapped original file path '{file_path}' to CRC key '{crc}' in stored_images.")
+                # IMMEDIATELY map the S3 key if available
+                if s3_key:
+                    stored_images[s3_key] = stored_images[crc]
+                    logger.info(f"[IMMEDIATE] Mapped S3 key '{s3_key}' to CRC key '{crc}' in stored_images.")
                 if os.path.exists(file_path):
                     os.remove(file_path)
                 return JSONResponse(
@@ -1358,6 +1368,10 @@ def process_dicom_file(file_path: str, key: str, crc: str):
                 # IMMEDIATELY map the file_path to the CRC key for UI access
                 stored_images[file_path] = stored_images[crc]
                 logger.info(f"[IMMEDIATE] Mapped original file path '{file_path}' to CRC key '{crc}' in stored_images.")
+                # IMMEDIATELY map the S3 key if available
+                if s3_key:
+                    stored_images[s3_key] = stored_images[crc]
+                    logger.info(f"[IMMEDIATE] Mapped S3 key '{s3_key}' to CRC key '{crc}' in stored_images.")
         except Exception as e:
             logger.warning(f"Failed to reload frames from cache after processing: {str(e)}")
 
@@ -1560,6 +1574,12 @@ def process_fds_file(file_path: str, key: str, crc: str):
     FDS files are similar to FDA files but may have different structure.
     """
     try:
+        # Check if this file has an S3 key that needs immediate mapping
+        s3_key = None
+        if key in stored_images and "s3_key" in stored_images[key]:
+            s3_key = stored_images[key]["s3_key"]
+            logger.info(f"Found S3 key for FDS mapping: {s3_key}")
+
         # Check CRC-based cache first
         cache_path = get_cache_path(crc)
         if cache_path.exists():
@@ -1596,6 +1616,11 @@ def process_fds_file(file_path: str, key: str, crc: str):
                     else:
                         stored_images[key]["is_oct"] = False
                         logger.info(f"Restored FDS single frame metadata: {number_of_frames} frames")
+
+                # IMMEDIATELY map the S3 key if available
+                if s3_key:
+                    stored_images[s3_key] = stored_images[key]
+                    logger.info(f"[IMMEDIATE] Mapped S3 key '{s3_key}' to key '{key}' in stored_images for FDS.")
 
                 # Clean up temporary file
                 if os.path.exists(file_path):
@@ -2192,6 +2217,12 @@ def process_fda_file(file_path: str, key: str, crc: str):
         - JSON response
     """
     try:
+        # Check if this file has an S3 key that needs immediate mapping
+        s3_key = None
+        if key in stored_images and "s3_key" in stored_images[key]:
+            s3_key = stored_images[key]["s3_key"]
+            logger.info(f"Found S3 key for FDA mapping: {s3_key}")
+
         # Check CRC-based cache first
         cache_path = get_cache_path(crc)
         if cache_path.exists():
@@ -2228,6 +2259,11 @@ def process_fda_file(file_path: str, key: str, crc: str):
                     else:
                         stored_images[key]["is_oct"] = False
                         logger.info(f"Restored FDA single frame metadata: {number_of_frames} frames")
+
+                # IMMEDIATELY map the S3 key if available
+                if s3_key:
+                    stored_images[s3_key] = stored_images[key]
+                    logger.info(f"[IMMEDIATE] Mapped S3 key '{s3_key}' to key '{key}' in stored_images for FDA.")
 
                 # Clean up temporary file
                 if os.path.exists(file_path):
