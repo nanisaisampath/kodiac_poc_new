@@ -641,8 +641,7 @@
         display: block;
         box-sizing: border-box;
         /* Ensure image stays within container */
-        overflow: hidden;
-        /* Prevent image from extending outside container */
+        overflow: hidden; /* Prevent image from extending outside container */
         contain: layout style paint;
       }
 
@@ -2502,9 +2501,6 @@
               <div class="s3-selection-controls">
                 <button id="selectModeBtn" class="select-mode-btn" onclick="toggleSelectionMode()">
                   <i class="fas fa-check-square"></i> Select
-                </button>
-                <button id="saveToCache" class="cache-btn" style="display: none;" onclick="saveSelectedToCache()">
-                  <i class="fas fa-save"></i> Save to Cache
                 </button>
                 <button id="cancelSelection" class="cancel-btn" style="display: none;" onclick="cancelSelectionMode()">
                   <i class="fas fa-times"></i> Cancel
@@ -5033,14 +5029,12 @@
         selectedFiles.clear();
         
         const selectBtn = document.getElementById('selectModeBtn');
-        const saveBtn = document.getElementById('saveToCache');
         const cancelBtn = document.getElementById('cancelSelection');
         
         if (isSelectionMode) {
           selectBtn.innerHTML = '<i class="fas fa-check-square"></i> Selecting...';
           selectBtn.style.backgroundColor = '#ffc107';
           selectBtn.style.color = '#000';
-          saveBtn.style.display = 'none';
           cancelBtn.style.display = 'flex';
           
           // Add selection capability to all items
@@ -5056,13 +5050,11 @@
         selectedFiles.clear();
         
         const selectBtn = document.getElementById('selectModeBtn');
-        const saveBtn = document.getElementById('saveToCache');
         const cancelBtn = document.getElementById('cancelSelection');
         
         selectBtn.innerHTML = '<i class="fas fa-check-square"></i> Select';
         selectBtn.style.backgroundColor = '#007bff';
         selectBtn.style.color = 'white';
-        saveBtn.style.display = 'none';
         cancelBtn.style.display = 'none';
         
         // Remove selection styles and checkboxes
@@ -5165,76 +5157,7 @@
           checkbox.classList.add('checked');
         }
 
-        // Update save button state
-        const saveBtn = document.getElementById('saveToCache');
-        if (saveBtn) {
-          saveBtn.style.display = selectedFiles.size > 0 ? 'flex' : 'none';
-          saveBtn.innerHTML = `<i class="fas fa-save"></i> Save to Cache (${selectedFiles.size})`;
-        }
-
         console.log(`Selected items: ${selectedFiles.size}`, [...selectedFiles]);
-      }
-
-      // Save selected files to cache and store CRCs with real-time progress
-      async function saveSelectedToCache() {
-        if (selectedFiles.size === 0) {
-          showNotification('Please select files to cache', 'warning');
-          return;
-        }
-
-        const filePaths = Array.from(selectedFiles);
-        const saveBtn = document.getElementById('saveToCache');
-
-        // Show progress popup with streaming support
-        showCacheProgressPopup(filePaths.length, true);
-
-        try {
-          // Send the file list to start processing with streaming
-          const response = await fetch('/api/save-to-cache-stream', {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ 
-              files: filePaths
-            }),
-          });
-
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          // Handle streaming response
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
-
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  handleCacheProgressUpdate(data);
-                } catch (e) {
-                  console.error('Error parsing progress data:', e);
-                }
-              }
-            }
-          }
-
-          console.log('Caching operation completed');
-
-          // After caching, user must explicitly select a file to view in a viewport.
-
-        } catch (e) {
-          hideCacheProgressPopup();
-          showNotification('Error saving to cache: ' + e.message, 'error');
-        }
       }
 
       // Handle real-time progress updates from SSE
@@ -6263,7 +6186,7 @@
       async function ensureFileCached(filePath) {
         let crc = fileCRCs[filePath];
         if (!crc) {
-          // First check if the file is already cached in the backend
+          // Check if the file is already cached in the backend
           try {
             const checkResponse = await fetch(`/api/download_dicom_from_s3?path=${encodeURIComponent(filePath)}`);
             if (checkResponse.ok) {
@@ -6281,19 +6204,21 @@
             console.warn(`Could not check if file is cached: ${error.message}`);
           }
 
-          // Not cached, so cache it now
-          const response = await fetch('/api/save-to-cache', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: [filePath] }),
-          });
-          const data = await response.json();
-          const result = data.results && data.results.find(r => r.file === filePath && r.status === "cached");
-          if (result && result.crc) {
-            fileCRCs[filePath] = result.crc;
-            crc = result.crc;
-          } else {
-            throw new Error("Failed to cache file for viewing.");
+          // File not cached, download it normally (no pre-caching)
+          try {
+            const response = await fetch(`/api/download_dicom_from_s3?path=${encodeURIComponent(filePath)}`);
+            if (response.ok) {
+              const data = await response.json();
+              // Generate a CRC for this file path to store locally
+              const pathCRC = calculateCRC32FromString(filePath);
+              fileCRCs[filePath] = pathCRC;
+              return pathCRC;
+            } else {
+              throw new Error("Failed to download file for viewing.");
+            }
+          } catch (error) {
+            console.error(`Error downloading file ${filePath}:`, error);
+            throw new Error("Failed to download file for viewing.");
           }
         }
         return crc;
@@ -7169,24 +7094,6 @@
       <span style="margin-left: 10px;">Loading... ${percent}%</span>
     </div>
   `;
-      }
-
-      // Add cache status function
-      async function getCacheStatus() {
-        try {
-          const response = await fetch("/api/cache-status");
-          const status = await response.json();
-          console.log("Cache Status:", status);
-
-          // Also log CRC cache stats
-          const crcStats = imageCache.getStats();
-          console.log("CRC Cache Stats:", crcStats);
-
-          return { ...status, crcCache: crcStats };
-        } catch (error) {
-          console.error("Error getting cache status:", error);
-          return null;
-        }
       }
 
       // Add function to display cache statistics
