@@ -81,9 +81,19 @@ async def shutdown_event():
 stored_images = {}
 
 # S3 API Router - import after defining stored_images
-from riv_desktop.s3_api import router as s3_router
+from riv_desktop.s3_api import router as s3_router, get_current_s3_status, update_s3_credentials
 
 app.include_router(s3_router)
+
+# Function to get current S3 status
+def get_s3_status():
+    """Get current S3 status from the s3_api module"""
+    return get_current_s3_status()
+
+# Function to update S3 credentials from main module
+def update_s3_credentials_from_main(access_key, secret_key, region, bucket):
+    """Update S3 credentials from main module"""
+    return update_s3_credentials(access_key, secret_key, region, bucket)
 
 # Performance optimization: Add connection pooling and caching
 import asyncio
@@ -152,9 +162,8 @@ def get_cache_path(crc: str) -> Path:
 
 
 def get_file_crc_from_metadata(file_path: str, metadata: dict = None) -> str:
-    """Generate CRC from file path and metadata for consistent caching."""
-    if metadata:
-        # Include relevant metadata in CRC calculation
+    """Generate CRC from file path and metadata for consistent caching. Fallback to path-only if metadata is missing or unstable."""
+    if metadata and all(k in metadata for k in ("size", "last_modified")):
         crc_data = {
             'path': file_path,
             'size': metadata.get('size', 0),
@@ -162,9 +171,10 @@ def get_file_crc_from_metadata(file_path: str, metadata: dict = None) -> str:
             'frame': metadata.get('frame', 0)
         }
         content = json.dumps(crc_data, sort_keys=True).encode('utf-8')
+        logger.info(f"[CRC] Hashing with metadata: {crc_data}")
         return calculate_content_crc32(content)
     else:
-        # Fallback to path-based CRC
+        logger.info(f"[CRC] Hashing with path only: {file_path}")
         return calculate_content_crc32(file_path.encode('utf-8'))
 
 
@@ -286,30 +296,16 @@ def load_from_cache(crc: str) -> tuple[dict, dict]:
                 else:
                     logger.warning(f"Frame {frame_num} not found in cached_images")
             
-            # Add E2E metadata with enhanced structure
+            # Add E2E metadata
             restored_data["file_type"] = "e2e"
-            restored_data["left_eye_data"] = file_info.get("left_eye_data", {
-                "dicom": [], 
-                "oct": [], 
-                "original_oct": [], 
-                "flattened_oct": []
-            })
-            restored_data["right_eye_data"] = file_info.get("right_eye_data", {
-                "dicom": [], 
-                "oct": [], 
-                "original_oct": [], 
-                "flattened_oct": []
-            })
+            restored_data["left_eye_data"] = file_info.get("left_eye_data", {"dicom": [], "oct": []})
+            restored_data["right_eye_data"] = file_info.get("right_eye_data", {"dicom": [], "oct": []})
             restored_data["timestamp"] = time.time()
             restored_data["crc"] = crc
             
-            # Restore OCT frame information if available
-            if "oct_frame_info" in file_info:
-                restored_data["oct_frame_info"] = file_info["oct_frame_info"]
-            
             logger.info(f"Restored E2E data keys: {list(restored_data.keys())}")
             logger.info(
-                f"Successfully restored enhanced E2E data structure from cache for CRC: {crc}"
+                f"Successfully restored E2E data structure from cache for CRC: {crc}"
             )
             return restored_data, metadata
         else:
@@ -388,17 +384,18 @@ async def get_file_crc(path: str = Query(...)):
             logger.info(f"Returning cached CRC for {path}: {CRC_CACHE[path]}")
             return {"crc": CRC_CACHE[path], "source": "cache"}
 
-        # For S3 files, we'll generate CRC based on path and metadata
-        # This is a simplified approach - in production you might want to
-        # actually download and calculate the real file CRC
-        file_crc = get_file_crc_from_metadata(path)
-
-        # Cache the CRC for future requests
+        # Try to get file metadata if local
+        metadata = None
+        if os.path.exists(path):
+            stat = os.stat(path)
+            metadata = {
+                'size': stat.st_size,
+                'last_modified': str(stat.st_mtime)
+            }
+        file_crc = get_file_crc_from_metadata(path, metadata)
         CRC_CACHE[path] = file_crc
-
         logger.info(f"Generated CRC for {path}: {file_crc}")
         return {"crc": file_crc, "source": "generated"}
-
     except Exception as e:
         logger.error(f"Error getting CRC for {path}: {str(e)}")
         raise HTTPException(status_code=500,
@@ -1140,41 +1137,59 @@ def process_frame_parallel(frame_data, frame_idx):
     return frame_idx, frame_8bit
 
 
+def populate_stored_images_from_cache(key, cached_images, metadata, compression_type, is_compressed, number_of_frames):
+    """Populate stored_images[key] with all frames and metadata from cache."""
+    stored_images[key] = {}
+    frame_count = 0
+    for frame_num, img_data in cached_images.items():
+        if isinstance(frame_num, int):
+            stored_images[key][frame_num] = img_data
+            frame_count += 1
+    stored_images[key]["timestamp"] = time.time()
+    stored_images[key]["crc"] = metadata.get("crc", key)
+    stored_images[key]["compression_type"] = compression_type
+    stored_images[key]["is_compressed"] = is_compressed
+    if number_of_frames > 1:
+        stored_images[key]["is_oct"] = True
+        stored_images[key]["middle_frame_index"] = number_of_frames // 2
+    else:
+        stored_images[key]["is_oct"] = False
+    logger.info(f"[populate_stored_images_from_cache] Loaded {frame_count} frames into memory for key: {key}")
+
+
 def process_dicom_file(file_path: str, key: str, crc: str):
     """
     Enhanced DICOM processing function with compressed DICOM support and CRC-based caching.
     Now uses parallel frame processing for multi-frame DICOMs.
     """
     logger.info(f"Processing DICOM file: {file_path}")
-
+    logger.info(f"[process_dicom_file] Using CRC key: {crc} for file_path: {file_path}")
     try:
         # Check CRC-based cache first
         cache_path = get_cache_path(crc)
         if cache_path.exists():
             logger.info(f"Loading from CRC cache: {crc}")
             cached_images, metadata = load_from_cache(crc)
-
-            if cached_images:  # Only proceed if we have cached images
-                stored_images[key] = cached_images
-
-                # Store timestamp and CRC for cache management
-                stored_images[key]["timestamp"] = time.time()
-                stored_images[key]["crc"] = crc
-
-                # Clean up temporary file
+            if cached_images:
+                logger.info(f"Restoring {len(cached_images)} items from cache for CRC: {crc}")
+                logger.info(f"Cached items keys: {list(cached_images.keys())}")
+                file_info = metadata.get("file_info", {})
+                compression_type = file_info.get("compression_type")
+                is_compressed = file_info.get("is_compressed")
+                number_of_frames = len([k for k in cached_images.keys() if isinstance(k, int)])
+                populate_stored_images_from_cache(crc, cached_images, metadata, compression_type, is_compressed, number_of_frames)
+                logger.info(f"Successfully loaded {number_of_frames} frames from CRC cache into memory for key: {crc}")
+                # IMMEDIATELY map the file_path to the CRC key for UI access
+                stored_images[file_path] = stored_images[crc]
+                logger.info(f"[IMMEDIATE] Mapped original file path '{file_path}' to CRC key '{crc}' in stored_images.")
                 if os.path.exists(file_path):
                     os.remove(file_path)
-
                 return JSONResponse(
                     content={
-                        "message":
-                        "File loaded from CRC cache.",
-                        "number_of_frames":
-                        metadata.get("number_of_frames", len(cached_images)),
-                        "dicom_file_path":
-                        key,
-                        "cache_source":
-                        "disk"
+                        "message": "File loaded from CRC cache.",
+                        "number_of_frames": number_of_frames,
+                        "dicom_file_path": crc,
+                        "cache_source": "disk"
                     })
 
         # Continue with normal processing if no cache or cache failed...
@@ -1304,13 +1319,13 @@ def process_dicom_file(file_path: str, key: str, crc: str):
             logger.info("Single frame DICOM detected. No parallel processing needed.")
             processed_frames[0] = pixels if len(pixels.shape) == 2 else pixels[0]
 
-        # Store processed frames as JPEGs in stored_images
+        # Store processed frames as PNGs in stored_images for better quality and consistency
         for frame in range(number_of_frames):
             try:
                 img_data = processed_frames[frame]
                 img = convert_dicom_to_image(img_data, 0)  # Already 2D
                 img_byte_arr = io.BytesIO()
-                img.save(img_byte_arr, format='JPEG', quality=95)
+                img.save(img_byte_arr, format='PNG')  # Use PNG for better quality and consistency
                 img_byte_arr.seek(0)
                 stored_images[key][frame] = img_byte_arr
                 logger.debug(f"Processed frame {frame + 1}/{number_of_frames}")
@@ -1322,22 +1337,29 @@ def process_dicom_file(file_path: str, key: str, crc: str):
         try:
             cache_data = {
                 k: v
-                for k, v in stored_images[key].items() if isinstance(k, int)
+                for k, v in stored_images[crc].items() if isinstance(k, int)
             }
             file_info = {
-                "name":
-                os.path.basename(file_path),
-                "size":
-                os.path.getsize(file_path) if os.path.exists(file_path) else 0,
-                "compression_type":
-                compression_type,
-                "is_compressed":
-                is_compressed
+                "name": os.path.basename(file_path),
+                "size": os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                "compression_type": compression_type,
+                "is_compressed": is_compressed
             }
             save_to_cache(crc, cache_data, "dicom", file_info)
             logger.info(f"Saved processed DICOM images to CRC cache: {crc}")
         except Exception as e:
             logger.warning(f"Failed to save to CRC cache: {str(e)}")
+        # --- Ensure all frames are loaded into memory after first processing ---
+        try:
+            cached_images, metadata = load_from_cache(crc)
+            if cached_images:
+                populate_stored_images_from_cache(crc, cached_images, metadata, compression_type, is_compressed, number_of_frames)
+                logger.info(f"Ensured all frames are loaded into memory after processing for key: {crc}")
+                # IMMEDIATELY map the file_path to the CRC key for UI access
+                stored_images[file_path] = stored_images[crc]
+                logger.info(f"[IMMEDIATE] Mapped original file path '{file_path}' to CRC key '{crc}' in stored_images.")
+        except Exception as e:
+            logger.warning(f"Failed to reload frames from cache after processing: {str(e)}")
 
         # Clean up temporary file
         try:
@@ -1354,7 +1376,7 @@ def process_dicom_file(file_path: str, key: str, crc: str):
             content={
                 "message": "File uploaded successfully.",
                 "number_of_frames": number_of_frames,
-                "dicom_file_path": key,
+                "dicom_file_path": crc,
                 "cache_source": "fresh_download",
                 "compression_info": {
                     "is_compressed": is_compressed,
@@ -1382,389 +1404,344 @@ def process_dicom_file(file_path: str, key: str, crc: str):
 
 def process_e2e_file(file_path: str, key: str, crc: str):
     """
-    Enhanced E2E file processing that extracts ALL OCT frames from the volume,
-    creates flattened versions, and implements proper caching for individual frames.
-
-    Args:
-        file_path (str): The path to the .e2e file.
-        key (str): A unique key for this file.
-        crc (str): The CRC hash of the file for caching.
-
-    Returns:
-        JSONResponse: A response containing information about the processed files.
+    Processes an .e2e file, extracts OCT and fundus data for both eyes,
+    creates DICOM files, flattened OCT images, and caches them.
+    Now also extracts and caches all original OCT frames for each eye.
     """
     try:
         oct_file = E2E(file_path)
         logger.info("E2E file detected")
 
-        # Initialize storage for this key
         if key not in stored_images:
             stored_images[key] = {}
-
-        # Mark as E2E file FIRST
         stored_images[key]["file_type"] = "e2e"
-
-        # Add dedicated storage for left and right eye data with enhanced structure
-        stored_images[key]["left_eye_data"] = {
-            "dicom": [], 
-            "oct": [],
-            "original_oct": [],  # New: All OCT frames
-            "flattened_oct": []  # New: All flattened OCT frames
-        }
-        stored_images[key]["right_eye_data"] = {
-            "dicom": [], 
-            "oct": [],
-            "original_oct": [],  # New: All OCT frames
-            "flattened_oct": []  # New: All flattened OCT frames
-        }
+        stored_images[key]["left_eye_data"] = {"dicom": [], "oct": [], "original_oct": []}
+        stored_images[key]["right_eye_data"] = {"dicom": [], "oct": [], "original_oct": []}
         stored_images[key]["timestamp"] = time.time()
         stored_images[key]["crc"] = crc
 
-        # Extract the original filename to check for l/r endings
         original_filename = os.path.basename(file_path).lower()
         logger.info(f"Processing E2E file: {original_filename}")
 
-        # Determine eye based on filename ending
         def get_laterality_from_filename(filename):
-            """Determine eye laterality from filename ending"""
             filename_lower = filename.lower()
             if filename_lower.endswith('l.e2e') or '_l.' in filename_lower:
                 return 'L'
             elif filename_lower.endswith('r.e2e') or '_r.' in filename_lower:
                 return 'R'
             else:
-                # Fallback: check for 'l' or 'r' in the filename
                 if 'l' in filename_lower:
                     return 'L'
                 elif 'r' in filename_lower:
                     return 'R'
-                return 'L'  # Default to left if unclear
+                return 'L'
 
         file_laterality = get_laterality_from_filename(original_filename)
         logger.info(f"Detected eye laterality from filename: {file_laterality}")
 
-        # 1. Process Fundus images with better validation
+        # 1. Process Fundus images (unchanged)
         try:
             fundus_images = oct_file.read_fundus_image()
-            dicom_files_info = {}
-
             for i, fundus_image in enumerate(fundus_images):
-                # Use filename-based laterality or object laterality as fallback
                 if hasattr(fundus_image, 'laterality') and fundus_image.laterality:
                     laterality = fundus_image.laterality
                 else:
                     laterality = file_laterality
-
                 eye_key = "left_eye_data" if laterality == 'L' else "right_eye_data"
-
-                # Process fundus image - handle both PIL Image and numpy array
-                fundus_key = f"{key}_{laterality}_fundus_{i:02d}"
+                fundus_key = f"{key}_{laterality}_fundus_{i}"
                 img_byte_arr = io.BytesIO()
-
-                # Handle different fundus image types
                 if hasattr(fundus_image, 'image') and fundus_image.image is not None:
                     fundus_data = fundus_image.image
-
-                    # Convert numpy array to PIL Image if needed
                     if isinstance(fundus_data, np.ndarray):
-                        # Normalize the array to 0-255 range
                         if fundus_data.dtype != np.uint8:
-                            fundus_normalized = (
-                                (fundus_data - fundus_data.min()) /
-                                (fundus_data.max() - fundus_data.min()) *
-                                255).astype(np.uint8)
+                            fundus_normalized = ((fundus_data - fundus_data.min()) / (fundus_data.max() - fundus_data.min()) * 255).astype(np.uint8)
                         else:
                             fundus_normalized = fundus_data
-
-                        # Convert to PIL Image
                         if len(fundus_normalized.shape) == 3:
-                            # Color image
                             pil_image = Image.fromarray(fundus_normalized)
                         else:
-                            # Grayscale image
                             pil_image = Image.fromarray(fundus_normalized, mode='L')
                     else:
-                        # Already a PIL Image
                         pil_image = fundus_data
-
-                    # Save as JPEG
-                    pil_image.save(img_byte_arr, format='JPEG', quality=95)
+                    pil_image.save(img_byte_arr, format='PNG')  # Use PNG for better quality and consistency
                     img_byte_arr.seek(0)
-
-                    # Store in memory with clear fundus identification
                     stored_images[key][fundus_key] = img_byte_arr
                     stored_images[key][eye_key]["dicom"].append(fundus_key)
-
-                    dicom_files_info[fundus_key] = {
-                        "frames": 1,
-                        "type": "fundus",
-                        "image_type": "fundus",
-                        "laterality": laterality,
-                        "index": i
-                    }
-                    logger.info(f"Processed fundus image {i} for {laterality} eye with key: {fundus_key}")
-
         except Exception as e:
             logger.warning(f"Error processing fundus images: {str(e)}")
 
-        # 2. Enhanced OCT volume processing - Extract ALL frames with better validation
+        # 2. Process OCT volumes, flatten, and cache all frames
         try:
             oct_volumes = oct_file.read_oct_volume()
-            oct_images_info = {}
-
             for i, oct_volume in enumerate(oct_volumes):
-                # Use filename-based laterality or object laterality as fallback
                 if hasattr(oct_volume, 'laterality') and oct_volume.laterality:
                     laterality = oct_volume.laterality
                 else:
                     laterality = file_laterality
-
                 eye_key = "left_eye_data" if laterality == 'L' else "right_eye_data"
-
-                # Process ALL frames in the OCT volume
+                # Extract all frames from the OCT volume
                 if hasattr(oct_volume, 'volume') and len(oct_volume.volume) > 0:
-                    total_frames = len(oct_volume.volume)
-                    logger.info(f"Processing OCT volume {i} for {laterality} eye with {total_frames} frames")
-
-                    # Validate that this is actually an OCT volume (should have multiple frames)
-                    if total_frames < 2:
-                        logger.warning(f"OCT volume {i} for {laterality} eye has only {total_frames} frames - may not be a valid OCT volume")
-                        continue
-
-                    # Process each frame in the OCT volume
-                    for frame_idx in range(total_frames):
-                        oct_slice = oct_volume.volume[frame_idx]
-                        
-                        # Validate OCT slice data
-                        if oct_slice is None:
-                            logger.warning(f"OCT slice {frame_idx} is None, skipping")
-                            continue
-                            
-                        # Create frame number with zero padding (e.g., frame_0001, frame_0002)
-                        frame_number = f"frame_{frame_idx:04d}"
-                        
-                        # Process original OCT frame
-                        orig_oct_key = f"{key}_{laterality}_oct_original_{frame_number}"
-                        orig_img_byte_arr = io.BytesIO()
-
-                        # Convert numpy array to PIL Image with validation
+                    for frame_idx, oct_slice in enumerate(oct_volume.volume):
+                        frame_name = f"{key}_{laterality}_original_oct_frame_{frame_idx:04d}"
+                        img_byte_arr = io.BytesIO()
                         if isinstance(oct_slice, np.ndarray):
-                            # Validate array shape and content
-                            if len(oct_slice.shape) < 2:
-                                logger.warning(f"OCT slice {frame_idx} has invalid shape: {oct_slice.shape}, skipping")
-                                continue
-                                
-                            # Normalize the OCT slice to 0-255 range
-                            if oct_slice.max() > oct_slice.min():
-                                oct_normalized = ((oct_slice - oct_slice.min()) /
-                                                  (oct_slice.max() - oct_slice.min()) *
-                                                  255).astype(np.uint8)
-                            else:
-                                # Handle case where all pixels have same value
-                                oct_normalized = np.full_like(oct_slice, 128, dtype=np.uint8)
-                                
-                            orig_pil_image = Image.fromarray(oct_normalized)
+                            oct_normalized = ((oct_slice - oct_slice.min()) / (oct_slice.max() - oct_slice.min()) * 255).astype(np.uint8)
+                            pil_image = Image.fromarray(oct_normalized)
                         else:
-                            # Handle non-numpy data
-                            logger.warning(f"OCT slice {frame_idx} is not a numpy array: {type(oct_slice)}")
-                            continue
-
-                        orig_pil_image.save(orig_img_byte_arr, format='JPEG', quality=95)
-                        orig_img_byte_arr.seek(0)
-
-                        # Store in memory with enhanced frame metadata
-                        stored_images[key][orig_oct_key] = orig_img_byte_arr
-                        stored_images[key][eye_key]["original_oct"].append(orig_oct_key)
-                        
-                        # Add enhanced frame metadata
-                        oct_images_info[orig_oct_key] = {
-                            "frames": 1,
-                            "type": "oct_original",
-                            "image_type": "oct_original",
-                            "frame_number": frame_idx,
-                            "frame_id": frame_number,
-                            "total_frames": total_frames,
-                            "laterality": laterality,
-                            "volume_index": i
-                        }
-
-                        # Process flattened OCT frame
-                        try:
-                            flattened_oct_key = f"{key}_{laterality}_oct_flattened_{frame_number}"
-                            flattened_img_byte_arr = io.BytesIO()
-
-                            # Apply OCT flattening and get numpy array result
-                            flattened_oct_array = apply_oct_flattening(
-                                oct_slice, is_middle_frame=True)
-
-                            # Convert flattened numpy array to PIL Image
-                            if isinstance(flattened_oct_array, np.ndarray):
-                                flattened_pil_image = Image.fromarray(flattened_oct_array)
-                            else:
-                                flattened_pil_image = flattened_oct_array
-
-                            flattened_pil_image.save(flattened_img_byte_arr, format='JPEG', quality=95)
-                            flattened_img_byte_arr.seek(0)
-
-                            stored_images[key][flattened_oct_key] = flattened_img_byte_arr
-                            stored_images[key][eye_key]["flattened_oct"].append(flattened_oct_key)
-                            
-                            oct_images_info[flattened_oct_key] = {
-                                "frames": 1,
-                                "type": "oct_flattened",
-                                "image_type": "oct_flattened",
-                                "frame_number": frame_idx,
-                                "frame_id": frame_number,
-                                "total_frames": total_frames,
-                                "laterality": laterality,
-                                "volume_index": i
-                            }
-
-                            logger.info(f"Processed OCT frame {frame_number} ({frame_idx + 1}/{total_frames}) for {laterality} eye with key: {orig_oct_key}")
-
-                        except Exception as flatten_error:
-                            logger.warning(f"Error flattening OCT frame {frame_number} for {laterality} eye: {str(flatten_error)}")
-
-                    # Keep backward compatibility - add middle frame to legacy "oct" list
-                    middle_frame_index = total_frames // 2
-                    middle_frame_number = f"frame_{middle_frame_index:04d}"
-                    middle_oct_key = f"{key}_{laterality}_oct_original_{middle_frame_number}"
-                    middle_flattened_key = f"{key}_{laterality}_oct_flattened_{middle_frame_number}"
-                    
-                    if middle_oct_key in stored_images[key]:
-                        stored_images[key][eye_key]["oct"].append(middle_oct_key)
-                    if middle_flattened_key in stored_images[key]:
-                        stored_images[key][eye_key]["oct"].append(middle_flattened_key)
-
-                    logger.info(f"Completed processing {total_frames} OCT frames for {laterality} eye")
-
+                            pil_image = oct_slice
+                        pil_image.save(img_byte_arr, format='PNG')  # Use PNG for better quality and consistency
+                        img_byte_arr.seek(0)
+                        stored_images[key][frame_name] = img_byte_arr
+                        stored_images[key][eye_key]["original_oct"].append(frame_name)
+                    # Also keep the old behavior for middle frame (flattened/original)
+                    middle_frame_index = len(oct_volume.volume) // 2
+                    oct_slice = oct_volume.volume[middle_frame_index]
+                    orig_oct_key = f"{key}_{laterality}_oct_original_{i}"
+                    orig_img_byte_arr = io.BytesIO()
+                    if isinstance(oct_slice, np.ndarray):
+                        oct_normalized = ((oct_slice - oct_slice.min()) / (oct_slice.max() - oct_slice.min()) * 255).astype(np.uint8)
+                        orig_pil_image = Image.fromarray(oct_normalized)
+                    else:
+                        orig_pil_image = oct_slice
+                    orig_pil_image.save(orig_img_byte_arr, format='PNG')  # Use PNG for better quality and consistency
+                    orig_img_byte_arr.seek(0)
+                    stored_images[key][orig_oct_key] = orig_img_byte_arr
+                    stored_images[key][eye_key]["oct"].append(orig_oct_key)
+                    # Flattened
+                    try:
+                        flattened_oct_key = f"{key}_{laterality}_oct_flattened_{i}"
+                        flattened_img_byte_arr = io.BytesIO()
+                        flattened_oct_array = apply_oct_flattening(oct_slice, is_middle_frame=True)
+                        if isinstance(flattened_oct_array, np.ndarray):
+                            flattened_pil_image = Image.fromarray(flattened_oct_array)
+                        else:
+                            flattened_pil_image = flattened_oct_array
+                        flattened_pil_image.save(flattened_img_byte_arr, format='PNG')  # Use PNG for better quality and consistency
+                        flattened_img_byte_arr.seek(0)
+                        stored_images[key][flattened_oct_key] = flattened_img_byte_arr
+                        stored_images[key][eye_key]["oct"].append(flattened_oct_key)
+                    except Exception as flatten_error:
+                        logger.warning(f"Error flattening OCT {i} for {laterality} eye: {str(flatten_error)}")
         except Exception as e:
             logger.warning(f"Error processing OCT volumes: {str(e)}")
 
-        # Save to CRC-based cache with enhanced structure
+        # Save to CRC-based cache (all frames, including original_oct)
         try:
-            # Create cache data for all processed images
-            cache_data = {}
-            frame_counter = 0
-            for img_key, img_data in stored_images[key].items():
-                if isinstance(img_data, io.BytesIO):
-                    cache_data[frame_counter] = img_data
-                    frame_counter += 1
-
-            # Enhanced E2E metadata structure with OCT frame information
-            e2e_metadata = {
-                "file_type": "e2e",
-                "left_eye_data": stored_images[key].get("left_eye_data", {
-                    "dicom": [], 
-                    "oct": [], 
-                    "original_oct": [], 
-                    "flattened_oct": []
-                }),
-                "right_eye_data": stored_images[key].get("right_eye_data", {
-                    "dicom": [], 
-                    "oct": [], 
-                    "original_oct": [], 
-                    "flattened_oct": []
-                }),
-                "frame_mapping": {},  # Map frame numbers to actual image keys
-                "oct_frame_info": {}  # New: Store OCT frame metadata
-            }
-
-            # Create mapping from frame numbers to actual image keys
-            frame_counter = 0
-            for img_key, img_data in stored_images[key].items():
-                if isinstance(img_data, io.BytesIO):
-                    e2e_metadata["frame_mapping"][frame_counter] = img_key
-                    frame_counter += 1
-
-            # Store OCT frame information for caching
-            e2e_metadata["oct_frame_info"] = oct_images_info
-
-            if cache_data:
-                save_to_cache(crc, cache_data, "e2e", e2e_metadata)
-                logger.info(f"Saved enhanced E2E processed images to CRC cache: {crc}")
+            cache_data = {k: v for k, v in stored_images[key].items() if isinstance(v, io.BytesIO)}
+            file_info = {"name": os.path.basename(file_path), "size": os.path.getsize(file_path) if os.path.exists(file_path) else 0}
+            save_to_cache(crc, cache_data, "e2e", file_info)
+            logger.info(f"Saved E2E processed images to CRC cache: {crc}")
         except Exception as e:
             logger.warning(f"Failed to save E2E to CRC cache: {str(e)}")
 
-        # Clean up the uploaded file
         if os.path.exists(file_path):
             os.remove(file_path)
-
-        # Count total processed images
-        total_images = len([
-            k for k in stored_images[key].keys()
-            if isinstance(stored_images[key][k], io.BytesIO)
-        ])
-
-        # Count OCT frames for each eye
-        left_oct_frames = len(stored_images[key]["left_eye_data"]["original_oct"])
-        right_oct_frames = len(stored_images[key]["right_eye_data"]["original_oct"])
-        
-        # Count fundus images for each eye
-        left_fundus_frames = len(stored_images[key]["left_eye_data"]["dicom"])
-        right_fundus_frames = len(stored_images[key]["right_eye_data"]["dicom"])
-
-        # Validate separation and log detailed information
-        logger.info(f"=== E2E Processing Summary for {key} ===")
-        logger.info(f"Total images processed: {total_images}")
-        logger.info(f"Left eye - Fundus: {left_fundus_frames}, OCT frames: {left_oct_frames}")
-        logger.info(f"Right eye - Fundus: {right_fundus_frames}, OCT frames: {right_oct_frames}")
-        
-        # Log all keys for debugging
-        all_keys = [k for k in stored_images[key].keys() if isinstance(stored_images[key][k], io.BytesIO)]
-        fundus_keys = [k for k in all_keys if "fundus" in k]
-        oct_keys = [k for k in all_keys if "oct_original" in k]
-        
-        logger.info(f"Fundus keys: {fundus_keys}")
-        logger.info(f"OCT original keys: {oct_keys}")
-        logger.info("=== End E2E Processing Summary ===")
-
+        total_images = len([k for k in stored_images[key].keys() if isinstance(stored_images[key][k], io.BytesIO)])
         return JSONResponse(
             content={
-                "message": "Enhanced E2E file processed and cached successfully.",
+                "message": "E2E file processed and cached successfully.",
                 "number_of_frames": total_images,
                 "dicom_file_path": key,
                 "cache_source": "fresh_download",
                 "file_type": "e2e",
                 "left_eye_data": stored_images[key]["left_eye_data"],
-                "right_eye_data": stored_images[key]["right_eye_data"],
-                "oct_frame_counts": {
-                    "left_eye": left_oct_frames,
-                    "right_eye": right_oct_frames
-                },
-                "fundus_frame_counts": {
-                    "left_eye": left_fundus_frames,
-                    "right_eye": right_fundus_frames
-                },
-                "validation": {
-                    "total_fundus_keys": len(fundus_keys),
-                    "total_oct_keys": len(oct_keys),
-                    "fundus_keys": fundus_keys,
-                    "oct_keys": oct_keys
-                }
+                "right_eye_data": stored_images[key]["right_eye_data"]
             })
-
     except Exception as e:
-        # Clean up file on error
         if os.path.exists(file_path):
             os.remove(file_path)
         logger.error(f"Error processing E2E file: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500,
-                            detail=f"Error processing E2E file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing E2E file: {str(e)}")
 
 
 def process_fds_file(file_path: str, key: str, crc: str):
-    # Clean up the file
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    """
+    Enhanced FDS format processing function with CRC-based caching.
+    FDS files are similar to FDA files but may have different structure.
+    """
+    try:
+        # Check CRC-based cache first
+        cache_path = get_cache_path(crc)
+        if cache_path.exists():
+            logger.info(f"Loading from CRC cache: {crc}")
+            cached_images, metadata = load_from_cache(crc)
 
-    return JSONResponse(
-        content={
-            "error": "FDS/FDA not supported.",
+            if cached_images:  # Only proceed if we have cached images
+                # Initialize storage for this key
+                stored_images[key] = {}
+
+                # Restore all cached frames
+                for frame_num, img_data in cached_images.items():
+                    if isinstance(frame_num, int):  # Only frame numbers, not metadata
+                        stored_images[key][frame_num] = img_data
+
+                # Store essential metadata for proper functioning
+                stored_images[key]["timestamp"] = time.time()
+                stored_images[key]["crc"] = crc
+                stored_images[key]["is_fds"] = True  # Mark as FDS file
+
+                # Restore file info from cache metadata
+                file_info = metadata.get("file_info", {})
+                if file_info:
+                    # Restore compression info
+                    stored_images[key]["compression_type"] = file_info.get("compression_type")
+                    stored_images[key]["is_compressed"] = file_info.get("is_compressed")
+                    
+                    # Determine if this was an OCT image based on frame count
+                    number_of_frames = len([k for k in cached_images.keys() if isinstance(k, int)])
+                    if number_of_frames > 1:
+                        stored_images[key]["is_oct"] = True
+                        stored_images[key]["middle_frame_index"] = number_of_frames // 2
+                        logger.info(f"Restored FDS OCT metadata: {number_of_frames} frames, middle frame index: {stored_images[key]['middle_frame_index']}")
+                    else:
+                        stored_images[key]["is_oct"] = False
+                        logger.info(f"Restored FDS single frame metadata: {number_of_frames} frames")
+
+                # Clean up temporary file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+
+                logger.info(
+                    f"Successfully loaded {len([k for k in cached_images.keys() if isinstance(k, int)])} frames from CRC cache"
+                )
+
+                return JSONResponse(
+                    content={
+                                    "message": "File loaded from CRC cache.",
+                                    "number_of_frames": len([k for k in cached_images.keys() if isinstance(k, int)]),
+                                    "dicom_file_path": key,
+                                    "cache_source": "disk"
+                                })
+
+        # Try to process as FDA file first (FDS and FDA are often compatible)
+        try:
+            fda = FDA(file_path)
+            logger.info(f"Successfully read FDS file as FDA: {file_path}")
+            
+            oct = fda.read_oct_volume()  # use oct.volume for frames
+            meta = fda_dicom_metadata(oct)  # use as is
+
+            number_of_frames = len(oct.volume)
+            
+            # Normalize
+            frames = normalize_volume(oct.volume)
+            pixel_data = np.array(frames).astype(np.uint16)
+
+            if pixel_data is None:
+                raise Exception("Failed to extract pixel data from FDS file")
+
+            logger.info(
+                f"Successfully extracted pixel data. Shape: {pixel_data.shape}")
+
+            # Apply windowing to fds file
+            try:
+                pixel_data = pixel_data.astype(np.float64)
+                pixels_min = pixel_data.min()
+                pixels_max = pixel_data.max()
+
+                if pixels_max > pixels_min:
+                    pixel_data = (pixel_data - pixels_min) / (pixels_max -
+                                                              pixels_min) * 255.0
+                else:
+                    pixel_data = np.full_like(pixel_data, 128.0)
+
+                pixel_data = pixel_data.astype(np.uint8)
+                logger.info(f"Windowing applied successfully")
+            except Exception as fallback_error:
+                logger.error(
+                    f"Even fallback normalization failed: {str(fallback_error)}")
+                raise
+
+            # Initialize storage for this key
+            if key not in stored_images:
+                stored_images[key] = {}
+
+            dicom_bytes = None  # TODO: research what are the dicom bytes for fds images
+
+            # Store the raw DICOM bytes for flattening
+            stored_images[key]["dicom_bytes"] = dicom_bytes
+            stored_images[key]["timestamp"] = time.time()
+            stored_images[key]["crc"] = crc
+            stored_images[key]["is_fds"] = True  # Mark as FDS file
+
+            # Store middle frame pixels for flattening (FDS files are typically multi-frame)
+            if number_of_frames > 1:
+                middle_frame_index = number_of_frames // 2
+                stored_images[key]["middle_frame_index"] = middle_frame_index
+                stored_images[key]["middle_frame_pixels"] = pixel_data[middle_frame_index].copy()
+                logger.info(f"Stored middle frame pixels for FDS flattening with shape: {pixel_data[middle_frame_index].shape}")
+
+            # Process each frame
+            logger.info(f"Processing {number_of_frames} frame(s)")
+            for frame in range(number_of_frames):
+                try:
+                    img = convert_dicom_to_image(pixel_data, frame)
+                    img_byte_arr = io.BytesIO()
+                    img.save(img_byte_arr, format='PNG')  # Use PNG for better quality and consistency
+                    img_byte_arr.seek(0)
+                    stored_images[key][frame] = img_byte_arr
+                    logger.debug(f"Processed frame {frame + 1}/{number_of_frames}")
+                except Exception as e:
+                    logger.error(f"Failed to process frame {frame}: {str(e)}")
+                    raise
+
+            # Save to hierarchical CRC-based cache
+            try:
+                cache_data = {
+                    k: v
+                    for k, v in stored_images[key].items() if isinstance(k, int)
+                }
+                file_info = {
+                    "name":
+                    os.path.basename(file_path),
+                    "size":
+                    os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                    "compression_type": None,
+                    "is_compressed": False
+                }
+                save_to_cache(crc, cache_data, "fds", file_info)
+                logger.info(f"Saved processed FDS images to CRC cache: {crc}")
+            except Exception as e:
+                logger.warning(f"Failed to save to CRC cache: {str(e)}")
+
+            # Clean up temporary file
+            try:
+                os.remove(file_path)
+                logger.info(f"Cleaned up temporary file: {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up file {file_path}: {str(e)}")
+
+            logger.info(
+                f"Successfully processed FDS file with {number_of_frames} frames")
+
+            return JSONResponse(
+                content={
+                    "message": "File uploaded successfully.",
+                    "number_of_frames": number_of_frames,
+                    "dicom_file_path": key,
+                    "cache_source": "fresh_download",
+                    "compression_info": {
+                        "is_compressed": False,
+                        "compression_type": None
+                    }
+                })
+                
+        except Exception as fda_error:
+            logger.warning(f"Failed to process FDS as FDA: {str(fda_error)}")
+            # Fall back to not supported
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            
+            return JSONResponse(
+                content={
+                    "error": f"FDS file format not supported: {str(fda_error)}",
             "number_of_frames": 0,
-            "dicom_file_path": key,  # Return key here
+                    "dicom_file_path": key,
             "cache_source": "not_supported"
         })
+    except Exception as e:
+        logger.error(f"Error processing FDS file: {str(e)}", exc_info=True)
+            
 
 
 # Add OCT flattening functionality
@@ -1790,8 +1767,8 @@ async def flatten_dicom_image(dicom_file_path: str = Query(...)):
             image_buffer.seek(0)
             return StreamingResponse(image_buffer, media_type="image/png")
 
-        # Method 1: Check if this is an OCT image with stored middle frame
-        if data.get("is_oct", False) and "middle_frame_pixels" in data:
+        # Method 1: Check if this is an OCT/FDA/FDS image with stored middle frame
+        if (data.get("is_oct", False) or data.get("is_fda", False) or data.get("is_fds", False)) and "middle_frame_pixels" in data:
             logger.info(
                 f"Processing OCT flattening using stored middle frame for {dicom_file_path}"
             )
@@ -2026,45 +2003,37 @@ async def view_e2e_eye(frame: int = Query(...),
 
 @app.get("/api/get_e2e_tree_data")
 async def get_e2e_tree_data(dicom_file_path: str = Query(...)):
-    """Get tree structure data for E2E file."""
+    """Get tree structure data for E2E file, now including original_oct branch."""
     logger.info(f"Getting E2E tree data for {dicom_file_path}")
-
     try:
         if dicom_file_path not in stored_images:
             logger.error(f"File {dicom_file_path} not found in stored_images. Available keys: {list(stored_images.keys())}")
-            raise HTTPException(status_code=404,
-                                detail="E2E file not found in memory.")
-
+            raise HTTPException(status_code=404, detail="E2E file not found in memory.")
         data = stored_images[dicom_file_path]
         logger.info(f"File data keys: {list(data.keys())}")
         logger.info(f"File type: {data.get('file_type')}")
-
         if data.get("file_type") != "e2e":
             logger.error(f"File {dicom_file_path} is not an E2E file. File type: {data.get('file_type')}")
-            raise HTTPException(status_code=400,
-                                detail="File is not an E2E file.")
-
-        left_eye_data = data.get("left_eye_data", {"dicom": [], "oct": []})
-        right_eye_data = data.get("right_eye_data", {"dicom": [], "oct": []})
-
-        # Convert the tree data to a format the frontend expects
+            raise HTTPException(status_code=400, detail="File is not an E2E file.")
+        left_eye_data = data.get("left_eye_data", {"dicom": [], "oct": [], "original_oct": []})
+        right_eye_data = data.get("right_eye_data", {"dicom": [], "oct": [], "original_oct": []})
         return JSONResponse(
             content={
                 "left_eye": {
                     "dicom": left_eye_data.get("dicom", []),
-                    "oct": left_eye_data.get("oct", [])
+                    "oct": left_eye_data.get("oct", []),
+                    "original_oct": left_eye_data.get("original_oct", [])
                 },
                 "right_eye": {
                     "dicom": right_eye_data.get("dicom", []),
-                    "oct": right_eye_data.get("oct", [])
+                    "oct": right_eye_data.get("oct", []),
+                    "original_oct": right_eye_data.get("original_oct", [])
                 },
                 "file_type": "e2e"
             })
-
     except Exception as e:
         logger.error(f"Error getting E2E tree data: {str(e)}")
-        raise HTTPException(status_code=500,
-                            detail=f"Error getting tree data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting tree data: {str(e)}")
 
 
 @app.get("/api/view_dicom_png")
@@ -2087,10 +2056,17 @@ async def view_dicom_png(frame: int = Query(...),
 
         data = stored_images[dicom_file_path]
 
-        # Check if this is an OCT and if the requested frame is the middle frame
+        # Check if this is an OCT/FDA/FDS and if the requested frame is the middle frame
         is_oct = data.get("is_oct", False)
+        is_fda = data.get("is_fda", False)
+        is_fds = data.get("is_fds", False)
         frame_keys = [k for k in data.keys() if isinstance(k, int)]
-        if is_oct and frame_keys:
+        
+        logger.info(f"File metadata - is_oct: {is_oct}, is_fda: {is_fda}, is_fds: {is_fds}")
+        logger.info(f"Available frame keys: {frame_keys}")
+        logger.info(f"Requested frame: {frame}")
+        
+        if (is_oct or is_fda or is_fds) and frame_keys:
             middle_frame_key = sorted(frame_keys)[len(frame_keys) // 2]
             if frame == middle_frame_key:
                 # Serve the flattened image if available, otherwise generate and cache it
@@ -2152,7 +2128,7 @@ async def view_dicom_png(frame: int = Query(...),
         }
         headers = {k: v for k, v in headers.items() if v is not None}
 
-        return StreamingResponse(buf, media_type="image/jpeg", headers=headers)
+        return StreamingResponse(buf, media_type="image/png", headers=headers)
 
     except Exception as e:
         logger.error(f"Error retrieving DICOM frame {frame}: {str(e)}",
@@ -2223,32 +2199,48 @@ def process_fda_file(file_path: str, key: str, crc: str):
             cached_images, metadata = load_from_cache(crc)
 
             if cached_images:  # Only proceed if we have cached images
-                # FIXED: Properly restore all frames from cache
+                # Initialize storage for this key
                 stored_images[key] = {}
 
                 # Restore all cached frames
                 for frame_num, img_data in cached_images.items():
-                    stored_images[key][frame_num] = img_data
+                    if isinstance(frame_num, int):  # Only frame numbers, not metadata
+                        stored_images[key][frame_num] = img_data
 
-                # Store timestamp and CRC for cache management
+                # Store essential metadata for proper functioning
                 stored_images[key]["timestamp"] = time.time()
                 stored_images[key]["crc"] = crc
+                stored_images[key]["is_fda"] = True  # Mark as FDA file
 
-                # FIXED: Get the correct number of frames from cache
-                number_of_frames = len(cached_images)
+                # Restore file info from cache metadata
+                file_info = metadata.get("file_info", {})
+                if file_info:
+                    # Restore compression info
+                    stored_images[key]["compression_type"] = file_info.get("compression_type")
+                    stored_images[key]["is_compressed"] = file_info.get("is_compressed")
+                    
+                    # Determine if this was an OCT image based on frame count
+                    number_of_frames = len([k for k in cached_images.keys() if isinstance(k, int)])
+                    if number_of_frames > 1:
+                        stored_images[key]["is_oct"] = True
+                        stored_images[key]["middle_frame_index"] = number_of_frames // 2
+                        logger.info(f"Restored FDA OCT metadata: {number_of_frames} frames, middle frame index: {stored_images[key]['middle_frame_index']}")
+                    else:
+                        stored_images[key]["is_oct"] = False
+                        logger.info(f"Restored FDA single frame metadata: {number_of_frames} frames")
 
                 # Clean up temporary file
                 if os.path.exists(file_path):
                     os.remove(file_path)
 
                 logger.info(
-                    f"Successfully loaded {number_of_frames} frames from CRC cache"
+                    f"Successfully loaded {len([k for k in cached_images.keys() if isinstance(k, int)])} frames from CRC cache"
                 )
 
                 return JSONResponse(
                     content={
                         "message": "File loaded from CRC cache.",
-                        "number_of_frames": number_of_frames,
+                        "number_of_frames": len([k for k in cached_images.keys() if isinstance(k, int)]),
                         "dicom_file_path": key,
                         "cache_source": "disk"
                     })
@@ -2318,6 +2310,14 @@ def process_fda_file(file_path: str, key: str, crc: str):
         stored_images[key]["dicom_bytes"] = dicom_bytes
         stored_images[key]["timestamp"] = time.time()
         stored_images[key]["crc"] = crc
+        stored_images[key]["is_fda"] = True  # Mark as FDA file
+
+        # Store middle frame pixels for flattening (FDA files are typically multi-frame)
+        if number_of_frames > 1:
+            middle_frame_index = number_of_frames // 2
+            stored_images[key]["middle_frame_index"] = middle_frame_index
+            stored_images[key]["middle_frame_pixels"] = pixel_data[middle_frame_index].copy()
+            logger.info(f"Stored middle frame pixels for FDA flattening with shape: {pixel_data[middle_frame_index].shape}")
 
         # Process each frame
         logger.info(f"Processing {number_of_frames} frame(s)")
@@ -2325,7 +2325,7 @@ def process_fda_file(file_path: str, key: str, crc: str):
             try:
                 img = convert_dicom_to_image(pixel_data, frame)
                 img_byte_arr = io.BytesIO()
-                img.save(img_byte_arr, format='JPEG', quality=95)
+                img.save(img_byte_arr, format='PNG')  # Use PNG for better quality and consistency
                 img_byte_arr.seek(0)
                 stored_images[key][frame] = img_byte_arr
                 logger.debug(f"Processed frame {frame + 1}/{number_of_frames}")
@@ -2820,7 +2820,7 @@ async def save_to_cache_api(request: Request):
 
             # Calculate CRC for caching (use metadata-based CRC for consistency)
             if (file_path.startswith("s3://") or (bucket_name and not os.path.exists(file_path))):
-                # For S3 files, use metadata-based CRC (same as download function)
+                # For S3 files, use metadata-based CRC (always use S3 key and metadata)
                 s3_key = file_path.replace("s3://", "")
                 if s3_key.startswith(bucket_name + "/"):
                     s3_key = s3_key[len(bucket_name) + 1:]
@@ -2829,11 +2829,11 @@ async def save_to_cache_api(request: Request):
                     file_size = head_response.get('ContentLength', 0)
                     last_modified = head_response.get('LastModified', '').isoformat() if head_response.get('LastModified') else ''
                     etag = head_response.get('ETag', '').strip('"')
-                    metadata_str = f"{file_path}:{etag}:{last_modified}:{file_size}"
+                    metadata_str = f"{s3_key}:{etag}:{last_modified}:{file_size}"
                     crc = format(zlib.crc32(metadata_str.encode('utf-8')) & 0xFFFFFFFF, '08x')
                 except Exception as e:
                     logger.warning(f"Could not get S3 metadata for {file_path}: {str(e)}")
-                    crc = format(zlib.crc32(file_path.encode('utf-8')) & 0xFFFFFFFF, '08x')
+                    crc = format(zlib.crc32(s3_key.encode('utf-8')) & 0xFFFFFFFF, '08x')
             else:
                 # For local files, use content-based CRC
                 crc = calculate_crc32(local_file_path)
@@ -2845,6 +2845,10 @@ async def save_to_cache_api(request: Request):
             if ext in [".dcm", ".dicom"]:
                 logger.info(f"Detected DICOM file: {local_file_path}")
                 resp = process_dicom_file(local_file_path, key, crc)
+                # Map both CRC and S3 key (if S3) in stored_images
+                if (file_path.startswith("s3://") or (bucket_name and not os.path.exists(file_path))):
+                    stored_images[s3_key] = stored_images[crc]
+                    logger.info(f"Mapped S3 key '{s3_key}' to CRC key '{crc}' in stored_images.")
             elif ext == ".e2e":
                 # Skip E2E files for pre-caching - they will be cached when loaded
                 logger.info(f"Skipping E2E file for pre-caching: {local_file_path}")
@@ -2974,22 +2978,20 @@ async def stream_cache_progress(files):
             
             # Calculate CRC for caching (use metadata-based CRC for consistency)
             if (file_path.startswith("s3://") or (bucket_name and not os.path.exists(file_path))):
-                # For S3 files, use metadata-based CRC (same as download function)
+                # For S3 files, use metadata-based CRC (always use S3 key and metadata)
                 s3_key = file_path.replace("s3://", "")
                 if s3_key.startswith(bucket_name + "/"):
                     s3_key = s3_key[len(bucket_name) + 1:]
-                
                 try:
                     head_response = s3.head_object(Bucket=bucket_name, Key=s3_key)
                     file_size = head_response.get('ContentLength', 0)
                     last_modified = head_response.get('LastModified', '').isoformat() if head_response.get('LastModified') else ''
                     etag = head_response.get('ETag', '').strip('"')
-                    
-                    metadata_str = f"{file_path}:{etag}:{last_modified}:{file_size}"
+                    metadata_str = f"{s3_key}:{etag}:{last_modified}:{file_size}"
                     crc = format(zlib.crc32(metadata_str.encode('utf-8')) & 0xFFFFFFFF, '08x')
                 except Exception as e:
                     logger.warning(f"Could not get S3 metadata for {file_path}: {str(e)}")
-                    crc = format(zlib.crc32(file_path.encode('utf-8')) & 0xFFFFFFFF, '08x')
+                    crc = format(zlib.crc32(s3_key.encode('utf-8')) & 0xFFFFFFFF, '08x')
             else:
                 # For local files, use content-based CRC
                 crc = calculate_crc32(local_file_path)
@@ -3004,6 +3006,10 @@ async def stream_cache_progress(files):
             if ext in [".dcm", ".dicom"]:
                 yield f"data: {json.dumps({'type': 'processing', 'file': file_path, 'message': 'Processing DICOM file...'})}\n\n"
                 resp = process_dicom_file(local_file_path, key, crc)
+                # Map both CRC and S3 key (if S3) in stored_images
+                if (file_path.startswith("s3://") or (bucket_name and not os.path.exists(file_path))):
+                    stored_images[s3_key] = stored_images[crc]
+                    logger.info(f"Mapped S3 key '{s3_key}' to CRC key '{crc}' in stored_images.")
             elif ext == ".e2e":
                 # Skip E2E files for pre-caching
                 yield f"data: {json.dumps({'type': 'skipped', 'file': file_path, 'message': 'E2E files are not supported for pre-caching'})}\n\n"
@@ -3131,6 +3137,40 @@ async def get_cache_status():
         return {"error": str(e)}
 
 
+@app.post("/api/clear-cache")
+async def clear_cache():
+    """Clear all caches (memory and disk)."""
+    try:
+        # Clear memory cache
+        stored_images.clear()
+        logger.info("Memory cache cleared")
+        
+        # Clear disk cache
+        cleared_files = 0
+        for file_type in ["dicom", "e2e", "fda"]:
+            cache_dir = CACHE_DIR / file_type
+            if cache_dir.exists():
+                for cache_entry in cache_dir.iterdir():
+                    if cache_entry.is_dir():
+                        try:
+                            import shutil
+                            shutil.rmtree(cache_entry)
+                            cleared_files += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to clear cache entry {cache_entry}: {str(e)}")
+        
+        logger.info(f"Disk cache cleared: {cleared_files} entries removed")
+        
+        return {
+            "message": "Cache cleared successfully",
+            "memory_cleared": True,
+            "disk_entries_cleared": cleared_files
+        }
+    except Exception as e:
+        logger.error(f"Error clearing cache: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
+
+
 @app.get("/api/file_info/{dicom_file_path}")
 async def get_file_info(dicom_file_path: str):
     """Get file information"""
@@ -3220,380 +3260,6 @@ async def get_file_tree_structure():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/get_e2e_tree_data")
-async def get_e2e_tree_data(dicom_file_path: str = Query(...)):
-    """Get enhanced tree structure data for E2E file including original_oct frames."""
-    logger.info(f"Getting enhanced E2E tree data for {dicom_file_path}")
-
-    try:
-        if dicom_file_path not in stored_images:
-            logger.error(f"File {dicom_file_path} not found in stored_images. Available keys: {list(stored_images.keys())}")
-            raise HTTPException(status_code=404,
-                                detail="E2E file not found in memory.")
-
-        data = stored_images[dicom_file_path]
-        logger.info(f"File data keys: {list(data.keys())}")
-        logger.info(f"File type: {data.get('file_type')}")
-
-        if data.get("file_type") != "e2e":
-            logger.error(f"File {dicom_file_path} is not an E2E file. File type: {data.get('file_type')}")
-            raise HTTPException(status_code=400,
-                                detail="File is not an E2E file.")
-
-        left_eye_data = data.get("left_eye_data", {
-            "dicom": [], 
-            "oct": [], 
-            "original_oct": [], 
-            "flattened_oct": []
-        })
-        right_eye_data = data.get("right_eye_data", {
-            "dicom": [], 
-            "oct": [], 
-            "original_oct": [], 
-            "flattened_oct": []
-        })
-
-        # Convert the tree data to a format the frontend expects with enhanced structure
-        return JSONResponse(
-            content={
-                "left_eye": {
-                    "dicom": left_eye_data.get("dicom", []),
-                    "oct": left_eye_data.get("oct", []),
-                    "original_oct": left_eye_data.get("original_oct", []),
-                    "flattened_oct": left_eye_data.get("flattened_oct", [])
-                },
-                "right_eye": {
-                    "dicom": right_eye_data.get("dicom", []),
-                    "oct": right_eye_data.get("oct", []),
-                    "original_oct": right_eye_data.get("original_oct", []),
-                    "flattened_oct": right_eye_data.get("flattened_oct", [])
-                },
-                "file_type": "e2e"
-            })
-
-    except Exception as e:
-        logger.error(f"Error getting E2E tree data: {str(e)}")
-        raise HTTPException(status_code=500,
-                            detail=f"Error getting tree data: {str(e)}")
-
-
-@app.get("/api/get_e2e_oct_frames")
-async def get_e2e_oct_frames(dicom_file_path: str = Query(...), eye: str = Query(...)):
-    """Get all OCT frames for a specific eye with metadata."""
-    logger.info(f"Getting OCT frames for {eye} eye from {dicom_file_path}")
-
-    try:
-        if dicom_file_path not in stored_images:
-            raise HTTPException(status_code=404,
-                                detail="E2E file not found in memory.")
-
-        data = stored_images[dicom_file_path]
-
-        if data.get("file_type") != "e2e":
-            raise HTTPException(status_code=400,
-                                detail="File is not an E2E file.")
-
-        # Get the appropriate eye data
-        eye_key = "left_eye_data" if eye.lower() == "left" else "right_eye_data"
-
-        if eye_key not in data:
-            raise HTTPException(status_code=404,
-                                detail=f"No data found for {eye} eye.")
-
-        eye_data = data[eye_key]
-        
-        # Get original OCT frames
-        original_oct_frames = eye_data.get("original_oct", [])
-        flattened_oct_frames = eye_data.get("flattened_oct", [])
-
-        # Create frame metadata
-        frames_info = []
-        for i, frame_key in enumerate(original_oct_frames):
-            # Extract frame number from key (e.g., "key_L_oct_original_frame_0001" -> "frame_0001")
-            frame_id = frame_key.split("_")[-1] if "_" in frame_key else f"frame_{i:04d}"
-            
-            frames_info.append({
-                "frame_number": i,
-                "frame_id": frame_id,
-                "original_key": frame_key,
-                "flattened_key": flattened_oct_frames[i] if i < len(flattened_oct_frames) else None,
-                "display_name": f"{frame_id}.jpg"
-            })
-
-        return JSONResponse(
-            content={
-                "eye": eye,
-                "total_frames": len(original_oct_frames),
-                "frames": frames_info,
-                "original_oct_frames": original_oct_frames,
-                "flattened_oct_frames": flattened_oct_frames
-            })
-
-    except Exception as e:
-        logger.error(f"Error getting OCT frames: {str(e)}")
-        raise HTTPException(status_code=500,
-                            detail=f"Error getting OCT frames: {str(e)}")
-
-
-@app.get("/api/view_e2e_oct_frame")
-async def view_e2e_oct_frame(dicom_file_path: str = Query(...), 
-                            eye: str = Query(...), 
-                            frame_number: int = Query(...),
-                            frame_type: str = Query("original")):
-    """View a specific OCT frame (original or flattened) for a given eye."""
-    logger.info(f"Viewing OCT frame {frame_number} ({frame_type}) for {eye} eye from {dicom_file_path}")
-
-    try:
-        if dicom_file_path not in stored_images:
-            raise HTTPException(status_code=404,
-                                detail="E2E file not found in memory.")
-
-        data = stored_images[dicom_file_path]
-
-        if data.get("file_type") != "e2e":
-            raise HTTPException(status_code=400,
-                                detail="File is not an E2E file.")
-
-        # Get the appropriate eye data
-        eye_key = "left_eye_data" if eye.lower() == "left" else "right_eye_data"
-
-        if eye_key not in data:
-            raise HTTPException(status_code=404,
-                                detail=f"No data found for {eye} eye.")
-
-        eye_data = data[eye_key]
-        
-        # Determine which frame list to use based on frame_type
-        if frame_type.lower() == "flattened":
-            frame_list = eye_data.get("flattened_oct", [])
-            frame_prefix = "flattened"
-        else:
-            frame_list = eye_data.get("original_oct", [])
-            frame_prefix = "original"
-
-        if frame_number >= len(frame_list):
-            raise HTTPException(status_code=404,
-                                detail=f"Frame {frame_number} not found. Available frames: {len(frame_list)}")
-
-        frame_key = frame_list[frame_number]
-        
-        # Validate that this is actually an OCT frame
-        if "fundus" in frame_key:
-            logger.error(f"Attempted to access fundus image as OCT frame: {frame_key}")
-            raise HTTPException(status_code=400,
-                                detail=f"Frame {frame_number} is a fundus image, not an OCT frame.")
-        
-        if frame_key not in data:
-            raise HTTPException(status_code=404,
-                                detail=f"Frame data '{frame_key}' not found.")
-
-        buf = data[frame_key]
-        buf.seek(0)
-
-        # Set cache headers for better performance
-        headers = {
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "Content-Type": "image/jpeg"
-        }
-
-        return StreamingResponse(buf, media_type="image/jpeg", headers=headers)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error viewing OCT frame: {str(e)}")
-        raise HTTPException(status_code=500,
-                            detail=f"Error viewing OCT frame: {str(e)}")
-
-
-@app.get("/api/validate_e2e_separation")
-async def validate_e2e_separation(dicom_file_path: str = Query(...)):
-    """Validate the separation between fundus and OCT images in an E2E file."""
-    logger.info(f"Validating E2E separation for {dicom_file_path}")
-
-    try:
-        if dicom_file_path not in stored_images:
-            raise HTTPException(status_code=404,
-                                detail="E2E file not found in memory.")
-
-        data = stored_images[dicom_file_path]
-
-        if data.get("file_type") != "e2e":
-            raise HTTPException(status_code=400,
-                                detail="File is not an E2E file.")
-
-        # Get all image keys
-        all_keys = [k for k in data.keys() if isinstance(data[k], io.BytesIO)]
-        
-        # Categorize keys
-        fundus_keys = [k for k in all_keys if "fundus" in k]
-        oct_original_keys = [k for k in all_keys if "oct_original" in k]
-        oct_flattened_keys = [k for k in all_keys if "oct_flattened" in k]
-        
-        # Check for any misclassified images
-        misclassified = []
-        for key in all_keys:
-            if "fundus" in key and key not in fundus_keys:
-                misclassified.append({"key": key, "issue": "fundus key not in fundus_keys"})
-            if "oct_original" in key and key not in oct_original_keys:
-                misclassified.append({"key": key, "issue": "oct_original key not in oct_original_keys"})
-        
-        # Validate eye data structure
-        left_eye_data = data.get("left_eye_data", {})
-        right_eye_data = data.get("right_eye_data", {})
-        
-        validation_result = {
-            "file_key": dicom_file_path,
-            "total_images": len(all_keys),
-            "fundus_images": {
-                "count": len(fundus_keys),
-                "keys": fundus_keys
-            },
-            "oct_original_images": {
-                "count": len(oct_original_keys),
-                "keys": oct_original_keys
-            },
-            "oct_flattened_images": {
-                "count": len(oct_flattened_keys),
-                "keys": oct_flattened_keys
-            },
-            "eye_data_structure": {
-                "left_eye": {
-                    "dicom": left_eye_data.get("dicom", []),
-                    "oct": left_eye_data.get("oct", []),
-                    "original_oct": left_eye_data.get("original_oct", []),
-                    "flattened_oct": left_eye_data.get("flattened_oct", [])
-                },
-                "right_eye": {
-                    "dicom": right_eye_data.get("dicom", []),
-                    "oct": right_eye_data.get("oct", []),
-                    "original_oct": right_eye_data.get("original_oct", []),
-                    "flattened_oct": right_eye_data.get("flattened_oct", [])
-                }
-            },
-            "misclassified_images": misclassified,
-            "validation_passed": len(misclassified) == 0
-        }
-
-        return JSONResponse(content=validation_result)
-
-    except Exception as e:
-        logger.error(f"Error validating E2E separation: {str(e)}")
-        raise HTTPException(status_code=500,
-                            detail=f"Error validating E2E separation: {str(e)}")
-
-
-@app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Upload and process a medical image file (DICOM, E2E, FDA, etc.)."""
-    logger.info(f"Uploading file: {file.filename}")
-    
-    try:
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
-            shutil.copyfileobj(file.file, tmp)
-            temp_path = tmp.name
-        
-        # Determine file type and process accordingly
-        file_extension = os.path.splitext(file.filename)[1].lower()
-        
-        # Generate a unique key for this file
-        file_key = str(uuid.uuid4())
-        
-        # Calculate CRC for caching
-        crc = calculate_crc32(temp_path)
-        
-        # Process based on file type
-        if file_extension in ['.dcm', '.dicom']:
-            result = process_dicom_file(temp_path, file_key, crc)
-        elif file_extension == '.e2e':
-            result = process_e2e_file(temp_path, file_key, crc)
-        elif file_extension == '.fda':
-            result = process_fda_file(temp_path, file_key, crc)
-        elif file_extension in ['.fds']:
-            result = process_fds_file(temp_path, file_key, crc)
-        else:
-            # Clean up temp file
-            os.remove(temp_path)
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_extension}")
-        
-        return result
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        logger.error(f"Error uploading file: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
-
-
-@app.get("/api/view_e2e_eye")
-async def view_e2e_eye(frame: int = Query(...),
-                       dicom_file_path: str = Query(...),
-                       eye: str = Query(...)):
-    """Enhanced E2E eye viewing with support for different image types."""
-    logger.info(
-        f"Received request to view E2E frame {frame} from file {dicom_file_path} for {eye} eye"
-    )
-
-    try:
-        if dicom_file_path not in stored_images:
-            raise HTTPException(status_code=404,
-                                detail="E2E file not found in memory.")
-
-        data = stored_images[dicom_file_path]
-
-        if data.get("file_type") != "e2e":
-            raise HTTPException(status_code=400,
-                                detail="File is not an E2E file.")
-
-        # Get the appropriate eye data
-        eye_key = "left_eye_data" if eye.lower(
-        ) == "left" else "right_eye_data"
-
-        if eye_key not in data:
-            logger.error(f"Eye key '{eye_key}' not found in data. Available keys: {list(data.keys())}")
-            raise HTTPException(status_code=404,
-                                detail=f"No data found for {eye} eye.")
-
-        eye_data = data[eye_key]
-        logger.info(f"Eye data for {eye} eye: {eye_data}")
-
-        # Get available images for this eye (both DICOM and OCT)
-        all_images = eye_data.get("dicom", []) + eye_data.get("oct", [])
-        logger.info(f"All images for {eye} eye: {all_images}")
-
-        if frame >= len(all_images):
-            logger.error(f"Frame {frame} out of range. Available frames: {len(all_images)}")
-            raise HTTPException(
-                status_code=404,
-                detail=f"Frame {frame} not found for {eye} eye.")
-
-        frame_key = all_images[frame]
-        logger.info(f"Frame key for frame {frame}: {frame_key}")
-
-        if frame_key not in data:
-            logger.error(f"Frame key '{frame_key}' not found in data. Available keys: {list(data.keys())}")
-            raise HTTPException(status_code=404,
-                                detail=f"Frame data '{frame_key}' not found.")
-
-        buf = data[frame_key]
-        buf.seek(0)
-
-        return StreamingResponse(buf, media_type="image/jpeg")
-
-    except HTTPException as e:
-        logger.error(
-            f"Error retrieving E2E frame {frame} for {eye} eye: {str(e)}")
-        raise e
-    except Exception as e:
-        logger.error(
-            f"Error retrieving E2E frame {frame} for {eye} eye: {str(e)}",
-            exc_info=True)
-        raise HTTPException(status_code=500,
-                            detail=f"Error processing E2E file: {str(e)}")
-
-
 def main():
     # Run the Uvicorn server
     uvicorn.run("main:app", host="localhost", port=8000, reload=True)
@@ -3601,3 +3267,54 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+@app.get("/api/view_e2e_oct_frame")
+async def view_e2e_oct_frame(dicom_file_path: str = Query(...), eye: str = Query(...), frame_idx: int = Query(...)):
+    """Serve a specific original OCT frame image for a given eye and frame index."""
+    logger.info(f"Request for original OCT frame {frame_idx} from {eye} eye in file {dicom_file_path}")
+    try:
+        if dicom_file_path not in stored_images:
+            raise HTTPException(status_code=404, detail="E2E file not found in memory.")
+        data = stored_images[dicom_file_path]
+        if data.get("file_type") != "e2e":
+            raise HTTPException(status_code=400, detail="File is not an E2E file.")
+        eye_key = "left_eye_data" if eye.lower() == "left" else "right_eye_data"
+        if eye_key not in data:
+            raise HTTPException(status_code=404, detail=f"No data found for {eye} eye.")
+        frame_list = data[eye_key].get("original_oct", [])
+        if frame_idx < 0 or frame_idx >= len(frame_list):
+            raise HTTPException(status_code=404, detail=f"Frame {frame_idx} not found for {eye} eye.")
+        frame_key = frame_list[frame_idx]
+        if frame_key not in data:
+            raise HTTPException(status_code=404, detail=f"Frame data '{frame_key}' not found.")
+        buf = data[frame_key]
+        buf.seek(0)
+        return StreamingResponse(buf, media_type="image/jpeg")
+    except HTTPException as e:
+        logger.error(f"Error retrieving original OCT frame {frame_idx} for {eye} eye: {str(e)}")
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving original OCT frame {frame_idx} for {eye} eye: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing E2E file: {str(e)}")
+
+
+@app.get("/api/debug_stored_images")
+async def debug_stored_images():
+    """Debug endpoint to check what's in stored_images."""
+    try:
+        debug_info = {}
+        for key, data in stored_images.items():
+            debug_info[key] = {
+                "keys": list(data.keys()),
+                "frame_count": len([k for k in data.keys() if isinstance(k, int)]),
+                "is_oct": data.get("is_oct", False),
+                "is_fda": data.get("is_fda", False),
+                "is_fds": data.get("is_fds", False),
+                "file_type": data.get("file_type", "unknown"),
+                "timestamp": data.get("timestamp", 0),
+                "crc": data.get("crc", "unknown")
+            }
+        return JSONResponse(content=debug_info)
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
