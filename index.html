@@ -620,9 +620,11 @@
         border: 1px dashed #ccc;
         border-radius: 4px;
         position: relative;
-        overflow: hidden; /* Critical: prevent content overflow */
+        overflow: hidden; /* Prevent image from extending outside */
         width: 100%;
         box-sizing: border-box;
+        /* Ensure proper containment */
+        contain: layout style paint;
       }
 
       /* Enhanced Image Constraints */
@@ -638,6 +640,10 @@
         position: relative;
         display: block;
         box-sizing: border-box;
+        /* Ensure image stays within container */
+        overflow: hidden;
+        /* Prevent image from extending outside container */
+        contain: layout style paint;
       }
 
       .viewport-image:active {
@@ -744,13 +750,23 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        z-index: 10;
+        z-index: 9999; /* Very high z-index to ensure visibility */
         backdrop-filter: blur(2px);
         border-radius: 4px;
+        pointer-events: auto; /* Ensure it can receive events */
       }
 
       .progress-overlay.active {
-        display: flex;
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        z-index: 1000 !important;
+        /* Ensure progress overlay is always visible even with overflow: hidden on parent */
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
       }
 
       .progress-overlay::before {
@@ -957,37 +973,35 @@
         display: block;
       }
 
-      .frame-controls {
+      .frame-slider-controls {
         display: flex;
         align-items: center;
         gap: 10px;
         margin: 5px 0;
       }
 
-      .frame-btn {
+      .frame-nav-btn {
         background-color: #338dcc;
         color: white;
         border: none;
         border-radius: 4px;
         width: 32px;
         height: 32px;
-        cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 14px;
+        cursor: pointer;
         transition: background-color 0.2s ease;
-        flex-shrink: 0;
+        font-size: 12px;
       }
 
-      .frame-btn:hover {
+      .frame-nav-btn:hover {
         background-color: #0c2130;
       }
 
-      .frame-btn:disabled {
+      .frame-nav-btn:disabled {
         background-color: #ccc;
         cursor: not-allowed;
-        opacity: 0.6;
       }
 
       .frame-slider {
@@ -1002,12 +1016,34 @@
         margin-top: 5px;
       }
 
-      .frame-help {
-        text-align: center;
-        font-size: 10px;
-        color: #999;
-        margin-top: 3px;
-        font-style: italic;
+      .mode-switch-controls {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .mode-switch-btn {
+        background-color: #338dcc;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 6px 12px;
+        cursor: pointer;
+        font-size: 11px;
+        transition: background-color 0.2s ease;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .mode-switch-btn:hover {
+        background-color: #0c2130;
+      }
+
+      .mode-switch-btn.active {
+        background-color: #0c2130;
+        font-weight: bold;
       }
 
       /* Original viewport containers for DICOM view */
@@ -1144,27 +1180,6 @@
         }
       }
 
-      /* Mobile responsive adjustments for frame controls */
-      @media (max-width: 768px) {
-        .frame-controls {
-          gap: 5px;
-        }
-
-        .frame-btn {
-          width: 28px;
-          height: 28px;
-          font-size: 12px;
-        }
-
-        .frame-slider {
-          min-width: 100px;
-        }
-
-        .frame-help {
-          font-size: 9px;
-        }
-      }
-
       @media (max-width: 768px) {
         .viewport-container {
           width: 100%;
@@ -1255,10 +1270,30 @@
         box-sizing: border-box;
       }
 
-      .s3-form-group input:focus {
+      .s3-form-group input:focus,
+      .s3-form-group select:focus {
         outline: none;
         border-color: #338dcc;
         box-shadow: 0 0 5px rgba(51, 141, 204, 0.3);
+      }
+
+      .s3-form-group select {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #ddd;
+        border-radius: 5px;
+        font-size: 14px;
+        box-sizing: border-box;
+        background-color: white;
+        cursor: pointer;
+      }
+
+      .s3-form-group small {
+        display: block;
+        margin-top: 5px;
+        color: #666;
+        font-size: 12px;
+        line-height: 1.4;
       }
 
       .s3-form-buttons {
@@ -1460,6 +1495,87 @@
         justify-content: space-between;
         align-items: center;
         margin-bottom: 15px;
+      }
+
+      .s3-status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 12px;
+        background-color: #f5f5f5;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: #ccc;
+      }
+
+      .status-dot.connected {
+        background-color: #4caf50;
+      }
+
+      .status-dot.disconnected {
+        background-color: #f44336;
+      }
+
+      .status-dot.checking {
+        background-color: #ff9800;
+        animation: pulse 1.5s infinite;
+      }
+
+      @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+      }
+
+      .status-text {
+        font-weight: 500;
+      }
+
+      .status-text.connected {
+        color: #4caf50;
+      }
+
+      .status-text.disconnected {
+        color: #f44336;
+      }
+
+      .status-text.checking {
+        color: #ff9800;
+      }
+
+      .status-refresh-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 2px;
+        border-radius: 3px;
+        color: #666;
+        font-size: 10px;
+        transition: all 0.2s;
+      }
+
+      .status-refresh-btn:hover {
+        background-color: #e0e0e0;
+        color: #333;
+      }
+
+      .status-refresh-btn:active {
+        transform: scale(0.95);
+      }
+
+      .status-refresh-btn.spinning i {
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
       }
 
       .s3-selection-controls {
@@ -1976,6 +2092,31 @@
         color: #666 !important;
       }
 
+      /* Original OCT frame specific styling */
+      .file-item.original-oct-frame {
+        border-left: 3px solid #ff9800;
+        background-color: #fff3e0;
+      }
+
+      .file-item.original-oct-frame:hover {
+        background-color: #ffe0b2;
+        border-color: #ff9800;
+      }
+
+      .file-item.original-oct-frame.selected {
+        background-color: #ff9800;
+        color: white;
+        border-color: #f57c00;
+      }
+
+      .file-item.original-oct-frame.selected:hover {
+        background-color: #f57c00;
+      }
+
+      .file-item.original-oct-frame.selected i {
+        color: white !important;
+      }
+
       /* DICOM Viewports Container */
       .dicom-viewports-container {
         display: flex;
@@ -2351,6 +2492,13 @@
           <div class="tree-panel">
             <div class="s3-header">
               <h3><i class="fas fa-folder-tree"></i> S3 File Browser</h3>
+              <div class="s3-status-indicator" id="s3StatusIndicator">
+                <span class="status-dot" id="s3StatusDot"></span>
+                <span class="status-text" id="s3StatusText">Checking...</span>
+                <button class="status-refresh-btn" onclick="refreshS3Status()" title="Refresh connection">
+                  <i class="fas fa-sync-alt"></i>
+                </button>
+              </div>
               <div class="s3-selection-controls">
                 <button id="selectModeBtn" class="select-mode-btn" onclick="toggleSelectionMode()">
                   <i class="fas fa-check-square"></i> Select
@@ -2397,6 +2545,9 @@
             <div class="refresh-controls">
               <button class="refresh-btn" onclick="loadS3Tree()" title="Refresh S3 List">
                 <i class="fas fa-sync-alt"></i> Refresh
+              </button>
+              <button class="refresh-btn" onclick="clearAllCaches()" title="Clear All Caches (Debug)">
+                <i class="fas fa-trash"></i> Clear Cache
               </button>
             </div>
 
@@ -2528,9 +2679,9 @@
                 <!-- Frame slider for Viewport 1 -->
                 <div class="frame-slider-container" id="frameSliderContainer1">
                   <label for="frameSlider1">Frame:</label>
-                  <div class="frame-controls">
-                    <button class="frame-btn" onclick="previousFrame(1)" title="Previous Frame">
-                      <i class="fas fa-minus"></i>
+                  <div class="frame-slider-controls">
+                    <button class="frame-nav-btn" id="framePrev1" onclick="navigateFrame(1, -1)" title="Previous Frame">
+                      <i class="fas fa-chevron-left"></i>
                     </button>
                     <input
                       type="range"
@@ -2540,12 +2691,19 @@
                       max="0"
                       value="0"
                     />
-                    <button class="frame-btn" onclick="nextFrame(1)" title="Next Frame">
-                      <i class="fas fa-plus"></i>
+                    <button class="frame-nav-btn" id="frameNext1" onclick="navigateFrame(1, 1)" title="Next Frame">
+                      <i class="fas fa-chevron-right"></i>
                     </button>
                   </div>
                   <div class="frame-info" id="frameInfo1">Frame 1 of 1</div>
-                  <div class="frame-help">Use ← → arrows or click ± buttons</div>
+                  <div class="mode-switch-controls" id="modeSwitchControls1" style="display: none; margin-top: 10px;">
+                    <button class="mode-switch-btn" onclick="switchToRegularMode(1)" title="Switch to Regular Mode">
+                      <i class="fas fa-images"></i> Regular
+                    </button>
+                    <button class="mode-switch-btn" onclick="switchToOCTMode(1)" title="Switch to OCT Mode">
+                      <i class="fas fa-eye"></i> OCT
+                    </button>
+                  </div>
                 </div>
 
                 <!-- Left Eye Tree Structure Container -->
@@ -2653,9 +2811,9 @@
                 <!-- Frame slider for Viewport 2 -->
                 <div class="frame-slider-container" id="frameSliderContainer2">
                   <label for="frameSlider2">Frame:</label>
-                  <div class="frame-controls">
-                    <button class="frame-btn" onclick="previousFrame(2)" title="Previous Frame">
-                      <i class="fas fa-minus"></i>
+                  <div class="frame-slider-controls">
+                    <button class="frame-nav-btn" id="framePrev2" onclick="navigateFrame(2, -1)" title="Previous Frame">
+                      <i class="fas fa-chevron-left"></i>
                     </button>
                     <input
                       type="range"
@@ -2665,12 +2823,19 @@
                       max="0"
                       value="0"
                     />
-                    <button class="frame-btn" onclick="nextFrame(2)" title="Next Frame">
-                      <i class="fas fa-plus"></i>
+                    <button class="frame-nav-btn" id="frameNext2" onclick="navigateFrame(2, 1)" title="Next Frame">
+                      <i class="fas fa-chevron-right"></i>
                     </button>
                   </div>
                   <div class="frame-info" id="frameInfo2">Frame 1 of 1</div>
-                  <div class="frame-help">Use ← → arrows or click ± buttons</div>
+                  <div class="mode-switch-controls" id="modeSwitchControls2" style="display: none; margin-top: 10px;">
+                    <button class="mode-switch-btn" onclick="switchToRegularMode(2)" title="Switch to Regular Mode">
+                      <i class="fas fa-images"></i> Regular
+                    </button>
+                    <button class="mode-switch-btn" onclick="switchToOCTMode(2)" title="Switch to OCT Mode">
+                      <i class="fas fa-eye"></i> OCT
+                    </button>
+                  </div>
                 </div>
 
                 <!-- Right Eye Tree Structure Container -->
@@ -2727,7 +2892,7 @@
       </div>
     </footer>
 
-    <!-- S3 Credentials Modal -->
+          <!-- S3 Credentials Modal -->
     <div id="s3CredentialsModal" class="s3-credentials-modal">
       <div class="s3-credentials-form">
         <h2><i class="fas fa-cloud"></i> AWS S3 Configuration</h2>
@@ -2761,6 +2926,7 @@
               placeholder="AKIA..."
               required
             />
+            <small style="color: #666; font-size: 12px;">Your AWS access key ID (starts with AKIA)</small>
           </div>
 
           <div class="s3-form-group">
@@ -2771,17 +2937,24 @@
               placeholder="Enter secret key"
               required
             />
+            <small style="color: #666; font-size: 12px;">Your AWS secret access key</small>
           </div>
 
           <div class="s3-form-group">
             <label for="s3Region">AWS Region:</label>
-            <input
-              type="text"
-              id="s3Region"
-              placeholder="us-east-1"
-              value="us-east-1"
-              required
-            />
+            <select id="s3Region" required>
+              <option value="us-east-1">US East (N. Virginia) - us-east-1</option>
+              <option value="us-east-2">US East (Ohio) - us-east-2</option>
+              <option value="us-west-1">US West (N. California) - us-west-1</option>
+              <option value="us-west-2">US West (Oregon) - us-west-2</option>
+              <option value="eu-west-1">Europe (Ireland) - eu-west-1</option>
+              <option value="eu-central-1">Europe (Frankfurt) - eu-central-1</option>
+              <option value="ap-southeast-1">Asia Pacific (Singapore) - ap-southeast-1</option>
+              <option value="ap-southeast-2">Asia Pacific (Sydney) - ap-southeast-2</option>
+              <option value="ap-northeast-1">Asia Pacific (Tokyo) - ap-northeast-1</option>
+              <option value="sa-east-1">South America (São Paulo) - sa-east-1</option>
+            </select>
+            <small style="color: #666; font-size: 12px;">The region where your S3 bucket is located</small>
           </div>
 
           <div class="s3-form-group">
@@ -2792,13 +2965,15 @@
               placeholder="my-dicom-bucket"
               required
             />
+            <small style="color: #666; font-size: 12px;">The name of your S3 bucket containing DICOM files</small>
           </div>
 
           <div class="s3-form-checkbox">
-            <input type="checkbox" id="s3SaveToEnv" />
+            <input type="checkbox" id="s3SaveToEnv" checked />
             <label for="s3SaveToEnv"
               >Save credentials to .env file (recommended)</label
             >
+            <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">This will save your credentials locally so you don't need to enter them again</small>
           </div>
 
           <div class="s3-form-buttons">
@@ -2911,10 +3086,24 @@
           filePath: filePath,
         });
 
-        // If loading a non-E2E file, reset E2E mode
-        if (isE2EMode && !filePath.toLowerCase().endsWith(".e2e")) {
+        // Validate file type before processing
+        const fileType = validateFileType(filePath);
+        console.log(`[DEBUG] Validated file type: ${fileType} for ${filePath}`);
+        
+        // Handle file type transitions
+        const isE2EFile = fileType === 'E2E';
+        
+        if (isE2EMode && !isE2EFile) {
+            // Switching from E2E mode to regular DICOM - reset E2E mode
             resetE2EMode();
-            }
+        } else if (!isE2EMode && isE2EFile) {
+            // Switching from regular DICOM to E2E mode - clear both viewports
+            clearViewport(1);
+            clearViewport(2);
+        } else if (!isE2EFile) {
+            // Loading regular DICOM file - clear the specific viewport
+            clearViewport(viewportNumber);
+        }
 
         // Set abort controller in progress manager
         progressManagers[viewportNumber].setAbortController(abortController);
@@ -2935,11 +3124,15 @@
           "Checking cache...",
           {
             File: fileName,
-            Type: fileExt,
+            Type: fileType,
+            Extension: fileExt,
             Source: "S3",
             Cache: "Checking...",
           },
         );
+
+        // Ensure progress is visible before proceeding
+        await new Promise(resolve => setTimeout(resolve, 200));
 
         // Hide other elements
         if (placeholder) placeholder.style.display = "none";
@@ -2995,7 +3188,7 @@
                   `Cached image loaded successfully for viewport ${viewportNumber}`,
                 );
                 img.style.display = "block";
-                resetZoom(viewportNumber);
+                centerImage(viewportNumber);
                 setupImageInteractions(viewportNumber);
 
                 // Set up single frame (cached images are typically single frame)
@@ -3064,6 +3257,8 @@
 
             const dicomData = await downloadResponse.json();
             console.log("DICOM data received:", dicomData);
+            console.log(`[DEBUG] dicomData.dicom_file_path: ${dicomData.dicom_file_path}`);
+            console.log(`[DEBUG] dicomData.cache_source: ${dicomData.cache_source}`);
 
             // Check if cancelled after download
             if (abortController.signal.aborted) {
@@ -3132,23 +3327,43 @@
 
             // Step 6: Auto image display logic
             const isOCT = isOCTDicom(viewportData[viewportNumber]);
-            if (isOCT) {
-              // Always show the flattened image for OCTs in the selected viewport
-              // Do NOT load any original frame for OCTs
-              nextProgressStep(viewportNumber, "Applying OCT flattening...", {
-                Status: "OCT Processing",
-                Type: "OCT Detected",
+            const fileType = detectFileType(filePath);
+            console.log(`[DEBUG] File type detection: fileType=${fileType}, isOCT=${isOCT}, frames=${dicomData.number_of_frames}`);
+            
+            if (isOCT || fileType === 'FDA' || fileType === 'FDS') {
+              // Handle OCT, FDA, and FDS files with flattening
+              const processingType = fileType === 'FDA' ? 'FDA Processing' : 
+                                   fileType === 'FDS' ? 'FDS Processing' : 'OCT Processing';
+              
+              nextProgressStep(viewportNumber, `Applying ${fileType} processing...`, {
+                Status: processingType,
+                Type: fileType,
                 Cache: cacheSource.toUpperCase(),
                 Progress: "Step 5/5",
               });
 
-              await flattenImageDirectly(viewportNumber);
-
-              // Override frame data to show only flattened version
-              totalFrames[viewportNumber] = 1;
-              currentFrames[viewportNumber] = 0;
+              if (fileType === 'E2E') {
+                // E2E files have special handling
+                console.log(`[DEBUG] Processing E2E file for viewport ${viewportNumber}`);
+                // E2E files are handled differently - they load into the tree structure
+                totalFrames[viewportNumber] = 1;
+                currentFrames[viewportNumber] = 0;
+              } else {
+                // OCT, FDA, FDS files use flattening
+                console.log(`[DEBUG] Processing ${fileType} file with flattening for viewport ${viewportNumber}`);
+                await flattenImageDirectly(viewportNumber);
+                
+                // Override frame data to show only flattened version
+                totalFrames[viewportNumber] = 1;
+                currentFrames[viewportNumber] = 0;
+              }
             } else {
-              // Load the first frame with CRC caching for non-OCT images
+              // Load the first frame with CRC caching for standard DICOM images
+              console.log(`[DEBUG] Loading standard DICOM frame 0 for viewport ${viewportNumber}`);
+              
+              // Debug: Check DICOM file status before loading
+              await checkDicomFileStatus(dicomData.dicom_file_path);
+              
               await loadFrameWithCRC(viewportNumber, 0, abortController);
 
               nextProgressStep(viewportNumber, "Finalizing...", {
@@ -3163,6 +3378,20 @@
               throw new Error("Operation cancelled by user");
             }
             console.error("Fetch error details:", error);
+            
+            // If it's a cache-related error, try clearing cache and retrying once
+            if (error.message.includes("404") || error.message.includes("not found") || error.message.includes("empty") || 
+                error.message.includes("not supported") || error.message.includes("failed")) {
+              console.log("[RETRY] Attempting cache clear and retry due to error:", error.message);
+              try {
+                await clearCacheAndRetry(viewportNumber, filePath);
+                return; // Success, exit early
+              } catch (retryError) {
+                console.error("[RETRY] Cache clear and retry failed:", retryError);
+                throw retryError; // Re-throw the original error
+              }
+            }
+            
             throw error;
           }
 
@@ -3538,11 +3767,18 @@
 
           // Step 4: Download image with CRC query parameter for HTTP caching
           const finalCacheKey = backendCRC || cacheKey;
-          const imageUrl = `/api/view_dicom_png?frame=${metadata.frame || 0}&dicom_file_path=${encodeURIComponent(metadata.dicomFilePath || filePath)}&v=${finalCacheKey}`;
+          
+          // Use the correct dicom_file_path - prioritize metadata.dicomFilePath over filePath
+          const dicomFilePath = metadata.dicomFilePath || filePath;
+          console.log(`[CRC CACHE] Using dicom_file_path: ${dicomFilePath} for file: ${filePath}`);
+          
+          const imageUrl = `/api/view_dicom_png?frame=${metadata.frame || 0}&dicom_file_path=${encodeURIComponent(dicomFilePath)}&v=${finalCacheKey}`;
 
           console.log(
             `[CRC CACHE] Downloading image with CRC: ${finalCacheKey}`,
           );
+          console.log(`[CRC CACHE] Image URL: ${imageUrl}`);
+          
           const response = await fetch(imageUrl, {
             headers: {
               "Cache-Control": "public, max-age=31536000, immutable",
@@ -3550,10 +3786,19 @@
           });
 
           if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const errorText = await response.text().catch(() => "Unknown error");
+            console.error(`[CRC CACHE] HTTP Error ${response.status}: ${response.statusText}`);
+            console.error(`[CRC CACHE] Error details: ${errorText}`);
+            throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
           }
 
           const imageBlob = await response.blob();
+          console.log(`[CRC CACHE] Downloaded image blob: ${imageBlob.size} bytes, type: ${imageBlob.type}`);
+          
+          if (imageBlob.size === 0) {
+            throw new Error("Downloaded image is empty (0 bytes)");
+          }
+          
           const imageUrl_cached = URL.createObjectURL(imageBlob);
 
           // Step 5: Store in cache
@@ -3597,6 +3842,34 @@
         }
 
         return false;
+      }
+
+      // Enhanced file type detection for better debugging
+      function detectFileType(filePath) {
+        const filename = filePath.toLowerCase();
+        if (filename.endsWith('.dcm') || filename.endsWith('.dicom')) {
+          return 'DICOM';
+        } else if (filename.endsWith('.e2e')) {
+          return 'E2E';
+        } else if (filename.endsWith('.fda')) {
+          return 'FDA';
+        } else if (filename.endsWith('.fds')) {
+          return 'FDS';
+        } else {
+          return 'UNKNOWN';
+        }
+      }
+
+      // Function to validate file type support
+      function validateFileType(filePath) {
+        const fileType = detectFileType(filePath);
+        const supportedTypes = ['DICOM', 'E2E', 'FDA', 'FDS'];
+        
+        if (!supportedTypes.includes(fileType)) {
+          throw new Error(`Unsupported file type: ${fileType}. Supported types: ${supportedTypes.join(', ')}`);
+        }
+        
+        return fileType;
       }
       function isOCT(dicomData) {
         return isOCTDicom(dicomData);
@@ -3844,19 +4117,37 @@
         }
 
         show(message = "Loading...", metadata = {}, operationId = null) {
-          const overlay = document.getElementById(
-            `progressOverlay${this.viewportNumber}`,
-          );
-          const text = document.getElementById(
-            `progressText${this.viewportNumber}`,
-          );
-          const cancelButton = document.getElementById(
-            `cancelButton${this.viewportNumber}`,
-          );
+          try {
+            const overlay = document.getElementById(
+              `progressOverlay${this.viewportNumber}`,
+            );
+            const text = document.getElementById(
+              `progressText${this.viewportNumber}`,
+            );
+            const cancelButton = document.getElementById(
+              `cancelButton${this.viewportNumber}`,
+            );
 
-          if (overlay && text) {
+            if (!overlay) {
+              console.error(`Progress overlay not found for viewport ${this.viewportNumber}`);
+              return;
+            }
+
+            if (!text) {
+              console.error(`Progress text element not found for viewport ${this.viewportNumber}`);
+              return;
+            }
+
+            // Force visibility with multiple approaches
             text.textContent = message;
+            overlay.style.display = "flex";
+            overlay.style.visibility = "visible";
+            overlay.style.opacity = "1";
             overlay.classList.add("active");
+            
+            // Ensure the overlay is on top
+            overlay.style.zIndex = "1000";
+            
             this.updateMetadata(metadata);
             this.updateProgress(0);
             this.currentStep = 0;
@@ -3869,55 +4160,77 @@
             } else if (cancelButton) {
               cancelButton.style.display = "none";
             }
+
+            console.log(`Progress shown for viewport ${this.viewportNumber}: ${message}`);
+            console.log(`Overlay display: ${overlay.style.display}, visibility: ${overlay.style.visibility}, opacity: ${overlay.style.opacity}`);
+          } catch (error) {
+            console.error(`Error showing progress for viewport ${this.viewportNumber}:`, error);
           }
         }
 
         hide() {
-          const overlay = document.getElementById(
-            `progressOverlay${this.viewportNumber}`,
-          );
-          const cancelButton = document.getElementById(
-            `cancelButton${this.viewportNumber}`,
-          );
+          try {
+            const overlay = document.getElementById(
+              `progressOverlay${this.viewportNumber}`,
+            );
+            const cancelButton = document.getElementById(
+              `cancelButton${this.viewportNumber}`,
+            );
 
-          if (overlay) {
-            overlay.classList.remove("active");
+            if (overlay) {
+              overlay.classList.remove("active");
+              // Add a small delay before hiding to ensure smooth transition
+              setTimeout(() => {
+                if (overlay && !overlay.classList.contains("active")) {
+                  overlay.style.display = "none";
+                }
+              }, 300);
+            }
+
+            if (cancelButton) {
+              cancelButton.style.display = "none";
+            }
+
+            this.operationId = null;
+            this.abortController = null;
+            console.log(`Progress hidden for viewport ${this.viewportNumber}`);
+          } catch (error) {
+            console.error(`Error hiding progress for viewport ${this.viewportNumber}:`, error);
           }
-
-          if (cancelButton) {
-            cancelButton.style.display = "none";
-          }
-
-          this.operationId = null;
-          this.abortController = null;
         }
 
         updateProgress(percentage, message = null) {
-          this.percentage = Math.max(0, Math.min(100, percentage));
+          try {
+            this.percentage = Math.max(0, Math.min(100, percentage));
 
-          const ring = document.getElementById(
-            `progressRing${this.viewportNumber}`,
-          );
-          const percentageEl = document.getElementById(
-            `progressPercentage${this.viewportNumber}`,
-          );
-          const text = document.getElementById(
-            `progressText${this.viewportNumber}`,
-          );
+            const ring = document.getElementById(
+              `progressRing${this.viewportNumber}`,
+            );
+            const percentageEl = document.getElementById(
+              `progressPercentage${this.viewportNumber}`,
+            );
+            const text = document.getElementById(
+              `progressText${this.viewportNumber}`,
+            );
 
-          if (ring) {
-            const circumference = 226; // 2 * π * 36
-            const offset =
-              circumference - (this.percentage / 100) * circumference;
-            ring.style.strokeDashoffset = offset;
-          }
+            if (ring) {
+              const circumference = 226; // 2 * π * 36
+              const offset =
+                circumference - (this.percentage / 100) * circumference;
+              ring.style.strokeDashoffset = offset;
+            }
 
-          if (percentageEl) {
-            percentageEl.textContent = `${Math.round(this.percentage)}%`;
-          }
+            if (percentageEl) {
+              percentageEl.textContent = `${Math.round(this.percentage)}%`;
+            }
 
-          if (message && text) {
-            text.textContent = message;
+            if (message && text) {
+              text.textContent = message;
+            }
+
+            console.log(`Progress updated for viewport ${this.viewportNumber}: ${this.percentage}% - ${message || ''}`);
+          } catch (error) {
+            console.error(`Error updating progress for viewport ${this.viewportNumber}:`, error);
           }
         }
 
@@ -3998,6 +4311,72 @@
         2: new ProgressManager(2),
       };
 
+      // Test function to verify progress system is working
+      function testProgressSystem(viewportNumber = 1) {
+        console.log(`Testing progress system for viewport ${viewportNumber}`);
+        
+        if (!progressManagers[viewportNumber]) {
+          console.error(`Progress manager not found for viewport ${viewportNumber}`);
+          return;
+        }
+
+        // Test showing progress
+        progressManagers[viewportNumber].show("Testing progress system...", {
+          "Test": "Progress",
+          "Viewport": viewportNumber
+        });
+
+        // Simulate progress updates
+        let progress = 0;
+        const interval = setInterval(() => {
+          progress += 10;
+          progressManagers[viewportNumber].updateProgress(progress, `Testing... ${progress}%`);
+          
+          if (progress >= 100) {
+            clearInterval(interval);
+            setTimeout(() => {
+              progressManagers[viewportNumber].hide();
+              console.log("Progress system test completed");
+            }, 1000);
+          }
+        }, 200);
+      }
+
+      // Make test function globally available
+      window.testProgressSystem = testProgressSystem;
+
+      // Debug function to check progress system elements
+      function debugProgressSystem() {
+        console.log("=== Progress System Debug ===");
+        
+        for (let viewport = 1; viewport <= 2; viewport++) {
+          console.log(`\nViewport ${viewport}:`);
+          
+          const elements = {
+            overlay: document.getElementById(`progressOverlay${viewport}`),
+            text: document.getElementById(`progressText${viewport}`),
+            percentage: document.getElementById(`progressPercentage${viewport}`),
+            ring: document.getElementById(`progressRing${viewport}`),
+            cancelButton: document.getElementById(`cancelButton${viewport}`),
+            metadata: document.getElementById(`progressMetadata${viewport}`),
+            steps: document.getElementById(`progressSteps${viewport}`)
+          };
+          
+          Object.entries(elements).forEach(([name, element]) => {
+            console.log(`  ${name}: ${element ? '✓ Found' : '✗ Missing'}`);
+          });
+          
+          console.log(`  Progress Manager: ${progressManagers[viewport] ? '✓ Created' : '✗ Missing'}`);
+        }
+        
+        console.log("=== End Debug ===");
+      }
+
+      // Make debug function globally available
+      window.debugProgressSystem = debugProgressSystem;
+
+
+
       // Cancel operation function
       function cancelOperation(viewportNumber) {
         console.log(`Cancelling operation for viewport ${viewportNumber}`);
@@ -4024,8 +4403,25 @@
         message = "Loading...",
         metadata = {},
       ) {
+        console.log(`showProgress called for viewport ${viewportNumber}: ${message}`);
+        console.log(`Progress manager exists: ${!!progressManagers[viewportNumber]}`);
+        
+        if (!progressManagers[viewportNumber]) {
+          console.error(`Progress manager not found for viewport ${viewportNumber}`);
+          return null;
+        }
+        
         const operationId = `operation_${viewportNumber}_${Date.now()}`;
         progressManagers[viewportNumber].show(message, metadata, operationId);
+        
+        // Verify the progress is actually shown
+        setTimeout(() => {
+          const overlay = document.getElementById(`progressOverlay${viewportNumber}`);
+          if (overlay) {
+            console.log(`Progress overlay state after show: display=${overlay.style.display}, classList=${overlay.classList.toString()}`);
+          }
+        }, 100);
+        
         return operationId;
       }
 
@@ -5139,10 +5535,78 @@
           saveBtn.style.display = 'none';
         }
         
-        // Auto-hide popup after completion
+        // Auto-hide popup after completion and navigate to viewport
         setTimeout(() => {
           hideCacheProgressPopup();
+          
+          // Navigate to viewport mode and load the first cached file
+          navigateToViewportAndLoadFirstFile();
         }, 3000);
+      }
+      
+      // Function to navigate to viewport and load the first cached file
+      async function navigateToViewportAndLoadFirstFile() {
+        try {
+          // Get the first cached file from the fileCRCs object
+          const cachedFiles = Object.keys(fileCRCs);
+          if (cachedFiles.length === 0) {
+            showNotification('No cached files found to display', 'warning');
+            return;
+          }
+          
+          const firstCachedFile = cachedFiles[0];
+          console.log(`Navigating to viewport and loading first cached file: ${firstCachedFile}`);
+          
+          // Show viewport mode
+          showViewportMode();
+          
+          // Load the first cached file into viewport 1
+          selectedFilePath = firstCachedFile;
+          await loadIntoViewport(1);
+          
+          showNotification(`Loaded ${firstCachedFile.split('/').pop()} into viewport`, 'success');
+          
+        } catch (error) {
+          console.error('Error navigating to viewport:', error);
+          showNotification(`Error loading cached file: ${error.message}`, 'error');
+        }
+      }
+      
+      // Function to show viewport mode
+      function showViewportMode() {
+        // Hide file browser
+        const fileBrowserContainer = document.querySelector('.file-browser-container');
+        if (fileBrowserContainer) {
+          fileBrowserContainer.style.display = 'none';
+        }
+        
+        // Show viewports container
+        const viewportsContainer = document.getElementById('viewportsContainer');
+        if (viewportsContainer) {
+          viewportsContainer.style.display = 'flex';
+          viewportsContainer.style.flexDirection = 'row';
+          viewportsContainer.style.gap = '20px';
+        }
+        
+        // Show both viewports
+        const viewport1 = document.getElementById('viewport1');
+        const viewport2 = document.getElementById('viewport2');
+        
+        if (viewport1) {
+          viewport1.style.display = 'flex';
+          viewport1.style.border = '2px solid #ccc';
+          viewport1.style.width = '';
+          viewport1.style.flex = '1';
+        }
+        
+        if (viewport2) {
+          viewport2.style.display = 'flex';
+          viewport2.style.border = '2px solid #ccc';
+          viewport2.style.width = '';
+          viewport2.style.flex = '1';
+        }
+        
+        console.log('Switched to viewport mode');
       }
 
       function hideCacheProgressPopup() {
@@ -5359,6 +5823,14 @@
           s3Container.classList.remove("stacked");
         }
 
+        // Initialize S3 status indicator
+        updateS3StatusIndicator('checking', 'Initializing...');
+        
+        // Check S3 status after a short delay
+        setTimeout(() => {
+          checkS3Status();
+        }, 500);
+
         console.log("Application initialized with layout controls and sorting");
       });
 
@@ -5446,14 +5918,19 @@
 
       // S3 Credentials Management
       async function checkS3Status() {
+        // Update status indicator to checking
+        updateS3StatusIndicator('checking', 'Checking connection...');
+
         if (s3StatusChecked && s3ConfiguredStatus !== null) {
           if (
             !s3ConfiguredStatus.configured &&
             s3ConfiguredStatus.needs_credentials
           ) {
+            updateS3StatusIndicator('disconnected', 'Not configured');
             showS3CredentialsModal();
             return false;
           }
+          updateS3StatusIndicator('connected', 'Connected');
           return true;
         }
 
@@ -5465,16 +5942,55 @@
           s3ConfiguredStatus = status;
 
           if (!status.configured && status.needs_credentials) {
+            updateS3StatusIndicator('disconnected', 'Not configured');
             showS3CredentialsModal();
             return false;
           }
+          
+          updateS3StatusIndicator('connected', `Connected to ${status.bucket}`);
           return true;
         } catch (error) {
           console.error("Error checking S3 status:", error);
           s3StatusChecked = true;
           s3ConfiguredStatus = { configured: false, needs_credentials: true };
+          updateS3StatusIndicator('disconnected', 'Connection error');
           showS3CredentialsModal();
           return false;
+        }
+      }
+
+      function updateS3StatusIndicator(status, text) {
+        const statusDot = document.getElementById('s3StatusDot');
+        const statusText = document.getElementById('s3StatusText');
+        
+        if (statusDot && statusText) {
+          // Remove all status classes
+          statusDot.className = 'status-dot';
+          statusText.className = 'status-text';
+          
+          // Add appropriate classes
+          statusDot.classList.add(status);
+          statusText.classList.add(status);
+          statusText.textContent = text;
+        }
+      }
+
+      async function refreshS3Status() {
+        const refreshBtn = document.querySelector('.status-refresh-btn');
+        if (refreshBtn) {
+          refreshBtn.classList.add('spinning');
+        }
+        
+        // Reset status cache to force a fresh check
+        s3StatusChecked = false;
+        s3ConfiguredStatus = null;
+        
+        try {
+          await checkS3Status();
+        } finally {
+          if (refreshBtn) {
+            refreshBtn.classList.remove('spinning');
+          }
         }
       }
 
@@ -5491,20 +6007,42 @@
       async function submitS3Credentials() {
         const accessKey = document.getElementById("s3AccessKey").value.trim();
         const secretKey = document.getElementById("s3SecretKey").value.trim();
-        const region = document.getElementById("s3Region").value.trim();
+        const region = document.getElementById("s3Region").value;
         const bucket = document.getElementById("s3Bucket").value.trim();
         const saveToEnv = document.getElementById("s3SaveToEnv").checked;
 
+        // Enhanced validation
         if (!accessKey || !secretKey || !region || !bucket) {
           showS3Error("Please fill in all fields.");
           return;
         }
 
+        // Validate access key format
+        if (!accessKey.startsWith('AKIA') && accessKey.length !== 20) {
+          showS3Error("Invalid Access Key ID format. Should start with 'AKIA' and be 20 characters long.");
+          return;
+        }
+
+        // Validate secret key length
+        if (secretKey.length < 40) {
+          showS3Error("Invalid Secret Access Key. Should be at least 40 characters long.");
+          return;
+        }
+
+        // Validate bucket name
+        if (bucket.length < 3 || bucket.length > 63) {
+          showS3Error("Invalid bucket name. Must be between 3 and 63 characters long.");
+          return;
+        }
+
+        // Show loading state
         document.getElementById("s3FormContent").style.display = "none";
         document.getElementById("s3LoadingState").style.display = "block";
         document.getElementById("s3ErrorMessage").style.display = "none";
+        document.getElementById("s3SuccessMessage").style.display = "none";
 
         try {
+          console.log("Submitting S3 credentials...");
           const response = await fetch("/api/set-s3-credentials", {
             method: "POST",
             headers: {
@@ -5520,27 +6058,56 @@
           });
 
           const result = await response.json();
+          console.log("S3 credentials response:", result);
 
           if (response.ok) {
-            showS3Success(
-              result.message +
-                (result.saved_to_env ? " Credentials saved to .env file." : ""),
-            );
+            const successMessage = result.message + 
+              (result.saved_to_env ? " Credentials saved to .env file." : " Credentials set for this session only.");
+            
+            showS3Success(successMessage);
 
+            // Reset status cache
             s3StatusChecked = false;
             s3ConfiguredStatus = null;
             s3TreeData = null;
 
+            // Update status indicator
+            updateS3StatusIndicator('connected', `Connected to ${bucket}`);
+
+            // Close modal and reload tree after delay
             setTimeout(() => {
               closeS3Modal();
               loadS3Tree();
             }, 2000);
           } else {
-            throw new Error(result.error || "Failed to set credentials");
+            // Handle different types of errors
+            let errorMessage = "Failed to set credentials";
+            if (result.detail) {
+              errorMessage = result.detail;
+            } else if (result.error) {
+              errorMessage = result.error;
+            }
+            
+            // Provide more helpful error messages
+            if (errorMessage.includes("Invalid credentials")) {
+              errorMessage = "Invalid AWS credentials. Please check your Access Key ID and Secret Access Key.";
+            } else if (errorMessage.includes("bucket")) {
+              errorMessage = "Bucket not found or not accessible. Please check the bucket name and your permissions.";
+            } else if (errorMessage.includes("region")) {
+              errorMessage = "Invalid region. Please select the correct AWS region for your bucket.";
+            }
+            
+            throw new Error(errorMessage);
           }
         } catch (error) {
           console.error("Error setting S3 credentials:", error);
-          showS3Error("Error: " + error.message);
+          
+          // Handle network errors
+          if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            showS3Error("Network error. Please check your connection and try again.");
+          } else {
+            showS3Error("Error: " + error.message);
+          }
         } finally {
           document.getElementById("s3LoadingState").style.display = "none";
           document.getElementById("s3FormContent").style.display = "block";
@@ -5671,6 +6238,9 @@
         return;
             }
 
+            // Clear the viewport before loading new file
+            clearViewport(viewportNumber);
+
             // Show progress bar right away
             showProgress(
                 viewportNumber,
@@ -5763,6 +6333,12 @@
             size: data.size || 0,
             lastModified: data.last_modified || "",
           };
+          
+          // Debug: Log the dicom_file_path being used
+          console.log(`[DEBUG] loadFrameWithCRC - viewport ${viewportNumber}, frame ${frameNumber}`);
+          console.log(`[DEBUG] data.dicom_file_path: ${data.dicom_file_path}`);
+          console.log(`[DEBUG] data.s3_key: ${data.s3_key}`);
+          console.log(`[DEBUG] frameMetadata.dicomFilePath: ${frameMetadata.dicomFilePath}`);
 
           // Try CRC cache first
           try {
@@ -5791,11 +6367,12 @@
               updateFrameInfo(viewportNumber, frameNumber);
             };
 
-            img.onerror = () => {
+            img.onerror = (error) => {
               console.error(
                 `Failed to load cached image for frame ${frameNumber}`,
+                error
               );
-              throw new Error("Failed to load cached image");
+              throw new Error(`Failed to load cached image: ${error.message || 'Unknown error'}`);
             };
 
             img.src = cachedResult.imageData;
@@ -5816,6 +6393,7 @@
           }
 
           // Fallback to original PNG endpoint
+          console.log(`[DEBUG] Fallback method - using data.dicom_file_path: ${data.dicom_file_path}`);
           const fetchOptions = abortController
             ? { signal: abortController.signal }
             : {};
@@ -5860,14 +6438,14 @@
             img.style.width = "auto";
             img.style.height = "auto";
 
-            resetZoom(viewportNumber);
+            centerImage(viewportNumber);
             setupImageInteractions(viewportNumber);
             updateFrameInfo(viewportNumber, frameNumber);
           };
 
-          img.onerror = () => {
-            console.error(`Failed to load image for frame ${frameNumber}`);
-            throw new Error("Failed to load image");
+          img.onerror = (error) => {
+            console.error(`Failed to load image for frame ${frameNumber}`, error);
+            throw new Error(`Failed to load image: ${error.message || 'Unknown error'}`);
           };
 
           img.src = pngUrl;
@@ -5883,7 +6461,108 @@
         return await loadFrameWithCRC(viewportNumber, frameNumber);
       }
 
-      // Setup frame slider - enhanced for OCT frame navigation
+      // Debug function to check DICOM file status
+      async function checkDicomFileStatus(dicomFilePath) {
+        try {
+          console.log(`[DEBUG] Checking DICOM file status: ${dicomFilePath}`);
+          
+          // Check if file is ready
+          const readyResponse = await fetch(`/api/check_dicom_ready?dicom_file_path=${encodeURIComponent(dicomFilePath)}`);
+          const readyData = await readyResponse.json();
+          console.log(`[DEBUG] DICOM ready status:`, readyData);
+          
+          // Check file info
+          const infoResponse = await fetch(`/api/file_info/${encodeURIComponent(dicomFilePath)}`);
+          if (infoResponse.ok) {
+            const infoData = await infoResponse.json();
+            console.log(`[DEBUG] DICOM file info:`, infoData);
+          } else {
+            console.log(`[DEBUG] Could not get file info: ${infoResponse.status}`);
+          }
+          
+          return readyData;
+        } catch (error) {
+          console.error(`[DEBUG] Error checking DICOM status:`, error);
+          return { ready: false, error: error.message };
+        }
+      }
+
+      // Function to clear cache and retry loading
+      async function clearCacheAndRetry(viewportNumber, filePath) {
+        try {
+          const fileType = detectFileType(filePath);
+          console.log(`[CACHE CLEAR] Clearing cache and retrying for ${filePath} (${fileType})`);
+          
+          // Clear the image cache
+          imageCache.clear();
+          
+          // Clear file CRCs
+          delete fileCRCs[filePath];
+          
+          // Clear viewport data
+          viewportData[viewportNumber] = {};
+          
+          // For E2E files, also clear the tree data
+          if (fileType === 'E2E') {
+            console.log(`[CACHE CLEAR] Clearing E2E tree data`);
+            // Clear any E2E-specific data
+            const leftEyeTree = document.getElementById('leftEyeTree');
+            const rightEyeTree = document.getElementById('rightEyeTree');
+            if (leftEyeTree) leftEyeTree.innerHTML = '';
+            if (rightEyeTree) rightEyeTree.innerHTML = '';
+          }
+          
+          // Retry loading
+          await loadIntoViewportWithPath(viewportNumber, filePath);
+        } catch (error) {
+          console.error(`[CACHE CLEAR] Error during retry:`, error);
+          throw error;
+        }
+      }
+
+      // Function to clear all caches (manual debug function)
+      async function clearAllCaches() {
+        try {
+          console.log(`[CACHE CLEAR] Clearing all caches`);
+          
+          // Clear the image cache
+          imageCache.clear();
+          
+          // Clear all file CRCs
+          Object.keys(fileCRCs).forEach(key => delete fileCRCs[key]);
+          
+          // Clear all viewport data
+          viewportData[1] = {};
+          viewportData[2] = {};
+          
+          // Clear viewport displays
+          clearViewport(1);
+          clearViewport(2);
+          
+          // Clear backend cache
+          try {
+            const response = await fetch('/api/clear-cache', { method: 'POST' });
+            if (response.ok) {
+              const result = await response.json();
+              console.log(`[CACHE CLEAR] Backend cache cleared:`, result);
+            } else {
+              console.warn(`[CACHE CLEAR] Failed to clear backend cache: ${response.status}`);
+            }
+          } catch (backendError) {
+            console.warn(`[CACHE CLEAR] Backend cache clear failed:`, backendError);
+          }
+          
+          // Show notification
+          showNotification("All caches cleared successfully", "success");
+          
+          console.log(`[CACHE CLEAR] All caches cleared`);
+        } catch (error) {
+          console.error(`[CACHE CLEAR] Error clearing caches:`, error);
+          showNotification("Error clearing caches", "error");
+        }
+      }
+
+      // Setup frame slider - handle both regular frames and OCT frames
       function setupFrameSlider(viewportNumber) {
         console.log(`Setting up frame slider for viewport ${viewportNumber}`);
 
@@ -5903,8 +6582,8 @@
           return;
         }
 
-        // Hide frame slider for flattened OCT images (legacy behavior)
-        if (data && data.isFlattened && !data.octFrameMode) {
+        // Hide frame slider for flattened OCT images
+        if (data && data.isFlattened) {
           frameSliderContainer.classList.remove("active");
           console.log(
             `Frame slider hidden for flattened OCT image in viewport ${viewportNumber}`,
@@ -5912,11 +6591,36 @@
           return;
         }
 
-        const numFrames = totalFrames[viewportNumber];
+        // Determine frame count based on mode
+        let numFrames;
+        let isOctMode = false;
+        
+        if (data && data.isOctMode && data.octFrameCount > 0) {
+          // OCT mode - use original OCT frame count
+          numFrames = data.octFrameCount;
+          isOctMode = true;
+          console.log(`OCT mode detected for viewport ${viewportNumber}, ${numFrames} OCT frames`);
+        } else if (data && data.octFrameCount > 0 && isE2EMode) {
+          // E2E mode with OCT frames available - use original OCT frame count
+          numFrames = data.octFrameCount;
+          isOctMode = true;
+          console.log(`E2E OCT mode detected for viewport ${viewportNumber}, ${numFrames} original OCT frames`);
+        } else {
+          // Regular mode - use total frames
+          numFrames = totalFrames[viewportNumber];
+          console.log(`Regular mode for viewport ${viewportNumber}, ${numFrames} frames`);
+        }
 
         frameSlider.min = 0;
         frameSlider.max = Math.max(0, numFrames - 1);
-        frameSlider.value = currentFrames[viewportNumber] || 0;
+        
+        // Preserve current frame value if it's within the new range, otherwise reset to 0
+        const currentValue = parseInt(frameSlider.value) || 0;
+        if (currentValue >= 0 && currentValue <= numFrames - 1) {
+          frameSlider.value = currentValue;
+        } else {
+          frameSlider.value = 0;
+        }
 
         frameSlider.onchange = null;
         frameSlider.oninput = null;
@@ -5924,20 +6628,22 @@
         if (numFrames <= 1) {
           frameSlider.disabled = true;
           console.log(
-            `Single-frame content detected for viewport ${viewportNumber}, slider disabled`,
+            `Single-frame detected for viewport ${viewportNumber}, slider disabled`,
           );
         } else {
           frameSlider.disabled = false;
           frameSlider.oninput = async (e) => {
             const frameNumber = parseInt(e.target.value);
             console.log(
-              `Frame slider changed to ${frameNumber} for viewport ${viewportNumber}`,
+              `Frame slider changed to ${frameNumber} for viewport ${viewportNumber} (${isOctMode ? 'OCT' : 'regular'} mode)`,
             );
             try {
-              // Check if we're in OCT frame mode
-              if (data && data.octFrameMode) {
-                await loadOCTFrameFromSlider(viewportNumber, frameNumber);
+              if (isOctMode && data && data.dicom_file_path) {
+                // OCT mode - load original OCT frame
+                const eye = viewportNumber === 1 ? 'left' : 'right';
+                await loadOriginalOCTFrame(viewportNumber, frameNumber, data.dicom_file_path, eye);
               } else {
+                // Regular mode - load regular frame
                 await loadFrame(viewportNumber, frameNumber);
               }
             } catch (error) {
@@ -5947,103 +6653,144 @@
         }
 
         frameSliderContainer.classList.add("active");
-        updateFrameInfo(viewportNumber, currentFrames[viewportNumber] || 0);
+        updateFrameInfo(viewportNumber, parseInt(frameSlider.value) || 0);
+
+        // Update navigation button states
+        updateNavigationButtons(viewportNumber, parseInt(frameSlider.value) || 0, numFrames);
+
+        // Show mode switch controls for E2E files with OCT frames
+        const modeSwitchControls = document.getElementById(`modeSwitchControls${viewportNumber}`);
+        if (modeSwitchControls && data && data.octFrameCount > 0 && isE2EMode) {
+          modeSwitchControls.style.display = "flex";
+          
+          // Update button states based on current mode
+          const regularBtn = modeSwitchControls.querySelector('button[onclick*="switchToRegularMode"]');
+          const octBtn = modeSwitchControls.querySelector('button[onclick*="switchToOCTMode"]');
+          
+          if (regularBtn && octBtn) {
+            if (data.isOctMode) {
+              regularBtn.classList.remove('active');
+              octBtn.classList.add('active');
+            } else {
+              regularBtn.classList.add('active');
+              octBtn.classList.remove('active');
+            }
+          }
+        } else if (modeSwitchControls) {
+          modeSwitchControls.style.display = "none";
+        }
 
         console.log(
-          `Frame slider setup complete for viewport ${viewportNumber}, ${numFrames} frame(s), OCT mode: ${data?.octFrameMode || false}`,
+          `Frame slider setup complete for viewport ${viewportNumber}, ${numFrames} frame(s) (${isOctMode ? 'OCT' : 'regular'} mode)`,
         );
-        
-        // Update button states
-        updateFrameButtonStates(viewportNumber);
+        console.log(`Viewport ${viewportNumber} data:`, data);
+        console.log(`Viewport ${viewportNumber} totalFrames:`, totalFrames[viewportNumber]);
       }
 
-      // Update frame button states (enable/disable based on current frame)
-      function updateFrameButtonStates(viewportNumber) {
-        const data = viewportData[viewportNumber];
-        const currentFrame = currentFrames[viewportNumber] || 0;
-        const totalFramesCount = totalFrames[viewportNumber] || 0;
+      // Update navigation button states
+      function updateNavigationButtons(viewportNumber, currentFrame, totalFrames) {
+        const prevBtn = document.getElementById(`framePrev${viewportNumber}`);
+        const nextBtn = document.getElementById(`frameNext${viewportNumber}`);
         
-        const prevBtn = document.querySelector(`#frameSliderContainer${viewportNumber} .frame-btn:first-child`);
-        const nextBtn = document.querySelector(`#frameSliderContainer${viewportNumber} .frame-btn:last-child`);
-        
-        if (prevBtn) {
-          prevBtn.disabled = currentFrame <= 0;
-        }
-        
-        if (nextBtn) {
-          nextBtn.disabled = currentFrame >= totalFramesCount - 1;
+        if (prevBtn && nextBtn) {
+          // Enable/disable buttons based on frame count
+          const hasMultipleFrames = totalFrames > 1;
+          prevBtn.disabled = !hasMultipleFrames;
+          nextBtn.disabled = !hasMultipleFrames;
+          
+          // Add visual feedback for single frame
+          if (!hasMultipleFrames) {
+            prevBtn.title = "Single frame - no navigation available";
+            nextBtn.title = "Single frame - no navigation available";
+          } else {
+            prevBtn.title = "Previous Frame (←)";
+            nextBtn.title = "Next Frame (→)";
+          }
         }
       }
 
-      // Navigate to previous frame
-      async function previousFrame(viewportNumber) {
-        const data = viewportData[viewportNumber];
-        const currentFrame = currentFrames[viewportNumber] || 0;
-        const totalFramesCount = totalFrames[viewportNumber] || 0;
-        
-        if (currentFrame <= 0) {
-          console.log(`Already at first frame for viewport ${viewportNumber}`);
+      // Add keyboard navigation support
+      document.addEventListener('keydown', function(event) {
+        // Only handle navigation if not typing in an input field
+        if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
           return;
         }
-        
-        const newFrame = currentFrame - 1;
-        console.log(`Navigating to previous frame: ${newFrame} for viewport ${viewportNumber}`);
-        
-        try {
-          // Check if we're in OCT frame mode
-          if (data && data.octFrameMode) {
-            await loadOCTFrameFromSlider(viewportNumber, newFrame);
-          } else {
-            await loadFrame(viewportNumber, newFrame);
-          }
-          
-          // Update slider value
-          const frameSlider = document.getElementById(`frameSlider${viewportNumber}`);
-          if (frameSlider) {
-            frameSlider.value = newFrame;
-          }
-          
-          // Update button states
-          updateFrameButtonStates(viewportNumber);
-          
-        } catch (error) {
-          console.error(`Error navigating to previous frame:`, error);
+
+        const activeViewport = getActiveViewport();
+        if (!activeViewport) return;
+
+        switch(event.key) {
+          case 'ArrowLeft':
+            event.preventDefault();
+            navigateFrame(activeViewport, -1);
+            break;
+          case 'ArrowRight':
+            event.preventDefault();
+            navigateFrame(activeViewport, 1);
+            break;
         }
+      });
+
+      // Get the currently active viewport (viewport with focus or last interacted)
+      function getActiveViewport() {
+        // Check if any viewport has an image loaded
+        const viewport1 = document.getElementById('viewportImage1');
+        const viewport2 = document.getElementById('viewportImage2');
+        
+        if (viewport1 && viewport1.style.display !== 'none' && viewportData[1]) {
+          return 1;
+        } else if (viewport2 && viewport2.style.display !== 'none' && viewportData[2]) {
+          return 2;
+        }
+        
+        return null;
       }
 
-      // Navigate to next frame
-      async function nextFrame(viewportNumber) {
+      // Navigate frame using + and - buttons
+      async function navigateFrame(viewportNumber, direction) {
+        const frameSlider = document.getElementById(`frameSlider${viewportNumber}`);
         const data = viewportData[viewportNumber];
-        const currentFrame = currentFrames[viewportNumber] || 0;
-        const totalFramesCount = totalFrames[viewportNumber] || 0;
         
-        if (currentFrame >= totalFramesCount - 1) {
-          console.log(`Already at last frame for viewport ${viewportNumber}`);
+        if (!frameSlider || !data) {
+          console.error(`No frame slider or data found for viewport ${viewportNumber}`);
           return;
         }
-        
-        const newFrame = currentFrame + 1;
-        console.log(`Navigating to next frame: ${newFrame} for viewport ${viewportNumber}`);
-        
+
+        const currentFrame = parseInt(frameSlider.value);
+        const maxFrame = parseInt(frameSlider.max);
+        let newFrame = currentFrame + direction;
+
+        console.log(`Navigating frame: current=${currentFrame}, direction=${direction}, new=${newFrame}, max=${maxFrame}`);
+
+        // Handle wrap-around
+        if (newFrame < 0) {
+          newFrame = maxFrame;
+        } else if (newFrame > maxFrame) {
+          newFrame = 0;
+        }
+
+        console.log(`After wrap-around: newFrame=${newFrame}`);
+
+        // Update slider value
+        frameSlider.value = newFrame;
+
+        // Update navigation button states
+        updateNavigationButtons(viewportNumber, newFrame, maxFrame + 1);
+
+        // Load the new frame
         try {
-          // Check if we're in OCT frame mode
-          if (data && data.octFrameMode) {
-            await loadOCTFrameFromSlider(viewportNumber, newFrame);
+          if (data.isOctMode && data.octFrameCount > 0) {
+            // OCT mode - load original OCT frame
+            const eye = viewportNumber === 1 ? 'left' : 'right';
+            console.log(`Loading OCT frame ${newFrame} for ${eye} eye`);
+            await loadOriginalOCTFrame(viewportNumber, newFrame, data.dicom_file_path, eye);
           } else {
+            // Regular mode - load regular frame
+            console.log(`Loading regular frame ${newFrame}`);
             await loadFrame(viewportNumber, newFrame);
           }
-          
-          // Update slider value
-          const frameSlider = document.getElementById(`frameSlider${viewportNumber}`);
-          if (frameSlider) {
-            frameSlider.value = newFrame;
-          }
-          
-          // Update button states
-          updateFrameButtonStates(viewportNumber);
-          
         } catch (error) {
-          console.error(`Error navigating to next frame:`, error);
+          console.error(`Error navigating frame: ${error}`);
         }
       }
 
@@ -6052,21 +6799,18 @@
         const frameInfo = document.getElementById(`frameInfo${viewportNumber}`);
         if (frameInfo) {
           const data = viewportData[viewportNumber];
-          const totalFramesCount = totalFrames[viewportNumber];
+          let totalFramesCount;
+          let modeText = '';
           
-          if (data && data.octFrameMode) {
-            // Show OCT frame specific info
-            const frameType = data.octFrameType || "original";
-            const eye = data.octFrameEye || "unknown";
-            frameInfo.textContent = `OCT ${frameType} - ${eye} eye - Frame ${frameNumber + 1} of ${totalFramesCount}`;
+          if (data && data.isOctMode && data.octFrameCount > 0) {
+            totalFramesCount = data.octFrameCount;
+            modeText = ' (OCT)';
           } else {
-            // Show regular frame info
-            frameInfo.textContent = `Frame ${frameNumber + 1} of ${totalFramesCount}`;
+            totalFramesCount = totalFrames[viewportNumber];
           }
+          
+          frameInfo.textContent = `Frame ${frameNumber + 1} of ${totalFramesCount}${modeText}`;
         }
-        
-        // Update button states when frame info changes
-        updateFrameButtonStates(viewportNumber);
       }
 
       // Enhanced flatten function that caches only the flattened result for OCT images
@@ -6327,7 +7071,19 @@
         updateZoomDisplay(viewportNumber);
       }
 
-      // Update image transform
+      // Center image in viewport
+      function centerImage(viewportNumber) {
+        const img = document.getElementById(`viewportImage${viewportNumber}`);
+        const container = document.getElementById(`viewportContent${viewportNumber}`);
+        
+        if (!img || !container) return;
+        
+        // Reset pan to center the image
+        viewportPan[viewportNumber] = { x: 0, y: 0 };
+        updateImageTransform(viewportNumber);
+      }
+
+      // Update image transform with improved constraints
       function constrainPan(viewportNumber) {
         const img = document.getElementById(`viewportImage${viewportNumber}`);
         const container = document.getElementById(
@@ -6336,19 +7092,27 @@
 
         if (!img || !container) return;
 
-        const containerRect = container.getBoundingClientRect();
-        const imgRect = img.getBoundingClientRect();
         const zoom = viewportZoom[viewportNumber];
-
-        // Calculate the scaled image dimensions
-        const scaledWidth = img.naturalWidth * zoom;
-        const scaledHeight = img.naturalHeight * zoom;
-
+        
+        // Get container dimensions
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        
+        // Get original image dimensions
+        const imgWidth = img.naturalWidth || img.width;
+        const imgHeight = img.naturalHeight || img.height;
+        
+        // Calculate scaled image dimensions
+        const scaledWidth = imgWidth * zoom;
+        const scaledHeight = imgHeight * zoom;
+        
         // Calculate maximum allowed pan values
-        const maxPanX = Math.max(0, (scaledWidth - containerRect.width) / 2);
-        const maxPanY = Math.max(0, (scaledHeight - containerRect.height) / 2);
-
-        // Constrain pan values
+        // When image is smaller than container, no pan is allowed
+        // When image is larger than container, pan is limited to keep image within bounds
+        const maxPanX = Math.max(0, (scaledWidth - containerWidth) / 2);
+        const maxPanY = Math.max(0, (scaledHeight - containerHeight) / 2);
+        
+        // Constrain pan values to keep image within viewport
         viewportPan[viewportNumber].x = Math.max(
           -maxPanX,
           Math.min(maxPanX, viewportPan[viewportNumber].x),
@@ -6357,11 +7121,20 @@
           -maxPanY,
           Math.min(maxPanY, viewportPan[viewportNumber].y),
         );
+        
+        // Additional constraint: if image is smaller than container, center it
+        if (scaledWidth <= containerWidth) {
+          viewportPan[viewportNumber].x = 0;
+        }
+        if (scaledHeight <= containerHeight) {
+          viewportPan[viewportNumber].y = 0;
+        }
       }
 
       function updateImageTransform(viewportNumber) {
         const img = document.getElementById(`viewportImage${viewportNumber}`);
-        if (!img) return;
+        const container = document.getElementById(`viewportContent${viewportNumber}`);
+        if (!img || !container) return;
 
         // Apply constraints before updating transform
         constrainPan(viewportNumber);
@@ -6369,7 +7142,13 @@
         const zoom = viewportZoom[viewportNumber];
         const pan = viewportPan[viewportNumber];
 
+        // Apply transform with proper centering
         img.style.transform = `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`;
+        
+        // Ensure image stays within container bounds
+        img.style.maxWidth = "100%";
+        img.style.maxHeight = "100%";
+        img.style.objectFit = "contain";
       }
 
       // Update zoom display
@@ -6429,6 +7208,10 @@
                 alert("Please select a valid E2E file");
                 return;
             }
+
+            // Clear both viewports before loading E2E file
+            clearViewport(1);
+            clearViewport(2);
 
             // Show progress bars for both viewports right away
             showProgress(1, "Preparing to load E2E...", {
@@ -6520,12 +7303,27 @@
           }
 
           // Setup frame sliders for both eyes - use actual eye data counts
+          // For E2E files, we need to store both regular frame count and original OCT frame count
           totalFrames[1] =
             (e2eData.left_eye_data?.dicom?.length || 0) +
               (e2eData.left_eye_data?.oct?.length || 0) || 1;
           totalFrames[2] =
             (e2eData.right_eye_data?.dicom?.length || 0) +
               (e2eData.right_eye_data?.oct?.length || 0) || 1;
+          
+          // Store original OCT frame counts for each eye
+          if (viewportData[1]) {
+            viewportData[1].left_eye_data = e2eData.left_eye_data;
+            viewportData[1].octFrameCount = e2eData.left_eye_data?.original_oct?.length || 0;
+            console.log(`Viewport 1 OCT frame count: ${viewportData[1].octFrameCount}`);
+            console.log(`Viewport 1 left eye data:`, e2eData.left_eye_data);
+          }
+          if (viewportData[2]) {
+            viewportData[2].right_eye_data = e2eData.right_eye_data;
+            viewportData[2].octFrameCount = e2eData.right_eye_data?.original_oct?.length || 0;
+            console.log(`Viewport 2 OCT frame count: ${viewportData[2].octFrameCount}`);
+            console.log(`Viewport 2 right eye data:`, e2eData.right_eye_data);
+          }
           setupFrameSlider(1);
           setupFrameSlider(2);
 
@@ -6601,8 +7399,127 @@
 
           img.src = imageUrl;
           currentFrames[viewportNumber] = frameNumber;
+          
+          // Reset OCT mode when loading regular E2E frames
+          if (viewportData[viewportNumber]) {
+            viewportData[viewportNumber].isOctMode = false;
+            viewportData[viewportNumber].octFrameCount = 0;
+            // Don't call setupFrameSlider here as it resets the slider value
+          }
         } catch (error) {
           console.error(`Error loading ${eye} eye image:`, error);
+          throw error;
+        }
+      }
+
+      // Switch to OCT mode for a viewport
+      async function switchToOCTMode(viewportNumber) {
+        const data = viewportData[viewportNumber];
+        if (data && data.octFrameCount > 0) {
+          data.isOctMode = true;
+          setupFrameSlider(viewportNumber);
+          console.log(`Switched viewport ${viewportNumber} to OCT mode with ${data.octFrameCount} frames`);
+          
+          // Load the first OCT frame
+          const eye = viewportNumber === 1 ? 'left' : 'right';
+          try {
+            await loadOriginalOCTFrame(viewportNumber, 0, data.dicom_file_path, eye);
+          } catch (error) {
+            console.error(`Error loading first OCT frame: ${error}`);
+          }
+        }
+      }
+
+      // Switch to regular mode for a viewport
+      async function switchToRegularMode(viewportNumber) {
+        const data = viewportData[viewportNumber];
+        if (data) {
+          data.isOctMode = false;
+          setupFrameSlider(viewportNumber);
+          console.log(`Switched viewport ${viewportNumber} to regular mode`);
+          
+          // Load the first regular frame
+          try {
+            await loadE2EEyeImage(viewportNumber, 0, data.dicom_file_path, viewportNumber === 1 ? 'left' : 'right');
+          } catch (error) {
+            console.error(`Error loading first regular frame: ${error}`);
+          }
+        }
+      }
+
+      // Load original OCT frame (NEW function)
+      async function loadOriginalOCTFrame(
+        viewportNumber,
+        frameIndex,
+        dicomFilePath,
+        eye,
+      ) {
+        const img = document.getElementById(`viewportImage${viewportNumber}`);
+        const placeholder = document.querySelector(
+          `#viewportContent${viewportNumber} .viewport-placeholder`,
+        );
+
+        try {
+          console.log(`Loading original OCT frame ${frameIndex} for ${eye} eye from ${dicomFilePath}`);
+          console.log(`Current viewport data:`, viewportData[viewportNumber]);
+          
+          updateProgress(
+            viewportNumber,
+            50,
+            `Loading original OCT frame ${frameIndex + 1}...`,
+          );
+
+          // Use the new original OCT frame endpoint
+          const url = `/api/view_e2e_oct_frame?dicom_file_path=${encodeURIComponent(dicomFilePath)}&eye=${eye}&frame_idx=${frameIndex}`;
+          console.log(`Fetching: ${url}`);
+          
+          const response = await fetch(url);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Original OCT frame endpoint error: ${response.status} ${response.statusText}`);
+            console.error(`Error details: ${errorText}`);
+            throw new Error(
+              `Failed to get original OCT frame: ${response.statusText}`,
+            );
+          }
+
+          const imageBlob = await response.blob();
+          const imageUrl = URL.createObjectURL(imageBlob);
+
+          img.onload = () => {
+            console.log(`Original OCT frame ${frameIndex} loaded for ${eye} eye`);
+            img.style.display = "block";
+            if (placeholder) placeholder.style.display = "none";
+            resetZoom(viewportNumber);
+            setupImageInteractions(viewportNumber);
+            updateFrameInfo(viewportNumber, frameIndex);
+            updateProgress(
+              viewportNumber,
+              100,
+              `Original OCT frame loaded successfully`,
+            );
+          };
+
+          img.onerror = () => {
+            throw new Error(`Failed to load original OCT frame`);
+          };
+
+          img.src = imageUrl;
+          currentFrames[viewportNumber] = frameIndex;
+          
+          // Set OCT mode and update frame count
+          if (viewportData[viewportNumber]) {
+            viewportData[viewportNumber].isOctMode = true;
+            // Get the total number of original OCT frames for this eye
+            const eyeData = eye === "left" ? viewportData[viewportNumber].left_eye_data : viewportData[viewportNumber].right_eye_data;
+            viewportData[viewportNumber].octFrameCount = eyeData?.original_oct?.length || 0;
+            
+            // Don't call setupFrameSlider here as it resets the slider value
+            // The slider should already be set up correctly
+          }
+        } catch (error) {
+          console.error(`Error loading original OCT frame:`, error);
           throw error;
         }
       }
@@ -6876,6 +7793,68 @@
       }
 
       // Reset E2E mode
+      function clearViewport(viewportNumber) {
+        // Clear the viewport image without showing progress (to avoid interference)
+        const img = document.getElementById(`viewportImage${viewportNumber}`);
+        const placeholder = document.querySelector(
+          `#viewportContent${viewportNumber} .viewport-placeholder`,
+        );
+        const error = document.getElementById(`error${viewportNumber}`);
+        const frameSliderContainer = document.getElementById(
+          `frameSliderContainer${viewportNumber}`,
+        );
+
+        // Hide image and show placeholder
+        if (img) {
+          img.style.display = "none";
+          img.src = ""; // Clear the image source
+        }
+        if (placeholder) placeholder.style.display = "block";
+        if (error) error.style.display = "none";
+        if (frameSliderContainer) frameSliderContainer.classList.remove("active");
+
+        // Reset viewport data
+        if (viewportData[viewportNumber]) {
+          viewportData[viewportNumber] = null;
+        }
+
+        // Reset frame counters
+        currentFrames[viewportNumber] = 0;
+        totalFrames[viewportNumber] = 1;
+
+        // Reset zoom and pan
+        viewportZoom[viewportNumber] = 1;
+        viewportPan[viewportNumber] = { x: 0, y: 0 };
+
+        console.log(`Viewport ${viewportNumber} cleared`);
+      }
+
+      function resetViewport(viewportNumber) {
+        // Clear the viewport completely
+        clearViewport(viewportNumber);
+        
+        // Reset E2E mode if this was the last viewport with data
+        const otherViewport = viewportNumber === 1 ? 2 : 1;
+        if (!viewportData[otherViewport] && isE2EMode) {
+          resetE2EMode();
+        }
+        
+        console.log(`Viewport ${viewportNumber} reset`);
+      }
+
+      function clearAllViewports() {
+        // Clear both viewports
+        clearViewport(1);
+        clearViewport(2);
+        
+        // Reset E2E mode
+        if (isE2EMode) {
+          resetE2EMode();
+        }
+        
+        console.log("All viewports cleared");
+      }
+
       function resetE2EMode() {
         isE2EMode = false;
         currentE2EFile = null;
@@ -6885,35 +7864,9 @@
         updateViewportTitles();
         resetEyeFocus();
 
-        // --- Clear Viewport 1 UI ---
-        const img1 = document.getElementById("viewportImage1");
-        const placeholder1 = document.querySelector(
-          "#viewportContent1 .viewport-placeholder",
-        );
-        const error1 = document.getElementById("error1");
-        const frameSliderContainer1 = document.getElementById(
-          "frameSliderContainer1",
-        );
-        if (img1) img1.style.display = "none";
-        if (placeholder1) placeholder1.style.display = "block";
-        if (error1) error1.style.display = "none";
-        if (frameSliderContainer1)
-          frameSliderContainer1.classList.remove("active");
-
-        // --- Clear Viewport 2 UI ---
-        const img2 = document.getElementById("viewportImage2");
-        const placeholder2 = document.querySelector(
-          "#viewportContent2 .viewport-placeholder",
-        );
-        const error2 = document.getElementById("error2");
-        const frameSliderContainer2 = document.getElementById(
-          "frameSliderContainer2",
-        );
-        if (img2) img2.style.display = "none";
-        if (placeholder2) placeholder2.style.display = "block";
-        if (error2) error2.style.display = "none";
-        if (frameSliderContainer2)
-          frameSliderContainer2.classList.remove("active");
+        // Clear both viewports
+        clearViewport(1);
+        clearViewport(2);
 
         console.log("E2E mode reset");
       }
@@ -7020,39 +7973,12 @@
 
         if (!content) return;
 
-        // Check if we have any data with enhanced structure
+        // Check if we have any data
         const octFiles = eyeData.oct || [];
         const dicomFiles = eyeData.dicom || [];
         const originalOctFiles = eyeData.original_oct || [];
-        const flattenedOctFiles = eyeData.flattened_oct || [];
 
-        // Debug logging to help identify separation issues
-        console.log(`=== Eye Tree Population for ${eye} eye ===`);
-        console.log(`Fundus/DICOM files: ${dicomFiles.length}`, dicomFiles);
-        console.log(`Original OCT files: ${originalOctFiles.length}`, originalOctFiles);
-        console.log(`Flattened OCT files: ${flattenedOctFiles.length}`, flattenedOctFiles);
-        console.log(`Legacy OCT files: ${octFiles.length}`, octFiles);
-        
-        // Validate that fundus and OCT files are properly separated
-        const fundusKeys = dicomFiles.filter(key => key.includes('fundus'));
-        const octKeys = originalOctFiles.filter(key => key.includes('oct_original'));
-        
-        console.log(`Fundus keys (should be in dicom): ${fundusKeys.length}`, fundusKeys);
-        console.log(`OCT keys (should be in original_oct): ${octKeys.length}`, octKeys);
-        
-        // Check for any misclassified files
-        const misclassifiedFundus = originalOctFiles.filter(key => key.includes('fundus'));
-        const misclassifiedOCT = dicomFiles.filter(key => key.includes('oct_original'));
-        
-        if (misclassifiedFundus.length > 0) {
-          console.warn(`WARNING: Found fundus images in original_oct:`, misclassifiedFundus);
-        }
-        if (misclassifiedOCT.length > 0) {
-          console.warn(`WARNING: Found OCT images in dicom:`, misclassifiedOCT);
-        }
-        console.log(`=== End Eye Tree Population ===`);
-
-        if (octFiles.length === 0 && dicomFiles.length === 0 && originalOctFiles.length === 0 && flattenedOctFiles.length === 0) {
+        if (octFiles.length === 0 && dicomFiles.length === 0 && originalOctFiles.length === 0) {
           content.innerHTML =
             '<div class="tree-placeholder">No files loaded for this eye yet</div>';
           return;
@@ -7061,27 +7987,24 @@
         // Build hierarchical tree HTML
         let treeHTML = "";
 
-        // Original OCT frames folder (NEW)
+        // Original OCT folder (NEW - contains all individual frames)
         if (originalOctFiles.length > 0) {
           treeHTML += `
             <div class="eye-tree-folder" onclick="toggleEyeTreeFolder('${eye}', 'original_oct')">
               <div class="eye-tree-item folder-header">
                 <i class="fas fa-chevron-down folder-arrow" id="${eye}-original_oct-arrow"></i>
-                <i class="fas fa-film folder-icon"></i>
+                <i class="fas fa-layer-group folder-icon"></i>
                 <span>Original OCT Frames (${originalOctFiles.length})</span>
               </div>
               <div class="eye-tree-children" id="${eye}-original_oct-children">
           `;
 
           originalOctFiles.forEach((item, index) => {
-            // Extract frame number from key (e.g., "key_L_oct_original_frame_0001" -> "frame_0001")
-            const frameId = item.split("_").slice(-1)[0] || `frame_${String(index).padStart(4, '0')}`;
-            const displayName = `${frameId}.jpg`;
-            
+            const frameNumber = (index + 1).toString().padStart(4, '0');
             treeHTML += `
-              <div class="eye-tree-item file-item" onclick="selectOCTFrame('${eye}', 'original', ${index}, '${item}', event)">
+              <div class="eye-tree-item file-item original-oct-frame" onclick="selectOriginalOCTFrame('${eye}', ${index}, '${item}', event)">
                 <i class="fas fa-image file-icon"></i>
-                <span>${displayName}</span>
+                <span>frame_${frameNumber}.png</span>
               </div>
             `;
           });
@@ -7092,45 +8015,14 @@
           `;
         }
 
-        // Flattened OCT frames folder (NEW)
-        if (flattenedOctFiles.length > 0) {
-          treeHTML += `
-            <div class="eye-tree-folder" onclick="toggleEyeTreeFolder('${eye}', 'flattened_oct')">
-              <div class="eye-tree-item folder-header">
-                <i class="fas fa-chevron-down folder-arrow" id="${eye}-flattened_oct-arrow"></i>
-                <i class="fas fa-compress-alt folder-icon"></i>
-                <span>Flattened OCT Frames (${flattenedOctFiles.length})</span>
-              </div>
-              <div class="eye-tree-children" id="${eye}-flattened_oct-children">
-          `;
-
-          flattenedOctFiles.forEach((item, index) => {
-            // Extract frame number from key
-            const frameId = item.split("_").slice(-1)[0] || `frame_${String(index).padStart(4, '0')}`;
-            const displayName = `${frameId}.jpg`;
-            
-            treeHTML += `
-              <div class="eye-tree-item file-item" onclick="selectOCTFrame('${eye}', 'flattened', ${index}, '${item}', event)">
-                <i class="fas fa-image file-icon"></i>
-                <span>${displayName}</span>
-              </div>
-            `;
-          });
-
-          treeHTML += `
-              </div>
-            </div>
-          `;
-        }
-
-        // Legacy OCT folder (for backward compatibility)
+        // OCT folder (processed OCT images)
         if (octFiles.length > 0) {
           treeHTML += `
             <div class="eye-tree-folder" onclick="toggleEyeTreeFolder('${eye}', 'oct')">
               <div class="eye-tree-item folder-header">
                 <i class="fas fa-chevron-down folder-arrow" id="${eye}-oct-arrow"></i>
                 <i class="fas fa-eye folder-icon"></i>
-                <span>OCT (Legacy) (${octFiles.length})</span>
+                <span>Processed OCT (${octFiles.length})</span>
               </div>
               <div class="eye-tree-children" id="${eye}-oct-children">
           `;
@@ -7181,19 +8073,10 @@
           `;
         }
 
-        // Add validation button for debugging
-        treeHTML += `
-          <div class="eye-tree-item" style="margin-top: 10px; padding: 8px; background-color: #f8f9fa; border-radius: 4px;">
-            <button onclick="validateE2ESeparation('${eye}')" style="width: 100%; padding: 5px; background-color: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">
-              <i class="fas fa-check-circle"></i> Validate Separation
-            </button>
-          </div>
-        `;
-
         content.innerHTML = treeHTML;
       }
 
-      // Toggle eye tree folder (OCT, DICOM/Fundus, or OCT frames)
+      // Toggle eye tree folder (OCT, DICOM/Fundus, or Original OCT)
       function toggleEyeTreeFolder(eye, type) {
         const childrenId = `${eye}-${type}-children`;
         const arrowId = `${eye}-${type}-arrow`;
@@ -7212,168 +8095,39 @@
         }
       }
 
-      // Select OCT frame and switch to OCT frame mode
-      function selectOCTFrame(eye, frameType, frameNumber, frameKey, event) {
+      // Select original OCT frame (NEW function)
+      function selectOriginalOCTFrame(eye, frameIndex, fileName, event) {
         // Prevent event bubbling to parent folder
         if (event) {
           event.stopPropagation();
         }
 
-        const viewportNumber = eye === "left" ? 1 : 2;
-        const data = viewportData[viewportNumber];
-        
-        if (!data || !data.dicom_file_path) {
-          console.error("No E2E data available for viewport", viewportNumber);
-          return;
-        }
-
-        console.log(`Loading OCT frame ${frameNumber} (${frameType}) for ${eye} eye`);
-
-        // Update visual selection
         const contentId = eye === "left" ? "leftEyeTreeContent" : "rightEyeTreeContent";
         const content = document.getElementById(contentId);
 
-        // Remove previous selection
+        // Remove previous selection from all file items
         content.querySelectorAll(".file-item").forEach((item) => {
           item.classList.remove("selected");
         });
 
-        // Select the clicked item
-        const fileItems = content.querySelectorAll(".file-item");
-        fileItems.forEach((item) => {
-          if (item.onclick && item.onclick.toString().includes(`selectOCTFrame('${eye}', '${frameType}', ${frameNumber}`)) {
+        // Find and select the clicked original OCT frame item
+        const fileItems = content.querySelectorAll(".original-oct-frame");
+        fileItems.forEach((item, itemIndex) => {
+          if (itemIndex === frameIndex) {
             item.classList.add("selected");
           }
         });
 
-        // Load the OCT frame
-        loadOCTFrame(viewportNumber, eye, frameNumber, data.dicom_file_path, frameType);
-
-        // Switch frame slider to OCT frame mode
-        switchToOCTFrameMode(viewportNumber, eye, frameType, frameNumber);
-
-        console.log(`Selected OCT frame ${frameNumber} (${frameType}) in ${eye} eye tree`);
-      }
-
-      // Load OCT frame from backend
-      async function loadOCTFrame(viewportNumber, eye, frameNumber, dicomFilePath, frameType) {
-        const img = document.getElementById(`viewportImage${viewportNumber}`);
-        const placeholder = document.querySelector(
-          `#viewportContent${viewportNumber} .viewport-placeholder`
-        );
-
-        try {
-          console.log(`Loading OCT frame ${frameNumber} (${frameType}) for ${eye} eye`);
-          
-          updateProgress(
-            viewportNumber,
-            50,
-            `Loading OCT frame ${frameNumber + 1} (${frameType})...`
-          );
-
-          // Use the new OCT frame endpoint
-          const url = `/api/view_e2e_oct_frame?dicom_file_path=${encodeURIComponent(dicomFilePath)}&eye=${eye}&frame_number=${frameNumber}&frame_type=${frameType}`;
-          console.log(`Fetching: ${url}`);
-          
-          const response = await fetch(url);
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`OCT frame endpoint error: ${response.status} ${response.statusText}`);
-            console.error(`Error details: ${errorText}`);
-            throw new Error(
-              `Failed to get OCT frame: ${response.statusText}`
-            );
+        // Load the selected original OCT frame
+        if (isE2EMode && currentE2EFile) {
+          const viewportNumber = eye === "left" ? 1 : 2;
+          const data = viewportData[viewportNumber];
+          if (data && data.dicom_file_path) {
+            loadOriginalOCTFrame(viewportNumber, frameIndex, data.dicom_file_path, eye);
           }
-
-          const imageBlob = await response.blob();
-          const imageUrl = URL.createObjectURL(imageBlob);
-
-          img.onload = () => {
-            console.log(`OCT frame ${frameNumber} (${frameType}) loaded for ${eye} eye`);
-            img.style.display = "block";
-            if (placeholder) placeholder.style.display = "none";
-            resetZoom(viewportNumber);
-            setupImageInteractions(viewportNumber);
-            updateFrameInfo(viewportNumber, frameNumber);
-            updateProgress(
-              viewportNumber,
-              100,
-              `OCT frame ${frameNumber + 1} (${frameType}) loaded successfully`
-            );
-          };
-
-          img.onerror = () => {
-            throw new Error(`Failed to load OCT frame ${frameNumber} (${frameType})`);
-          };
-
-          img.src = imageUrl;
-          currentFrames[viewportNumber] = frameNumber;
-        } catch (error) {
-          console.error(`Error loading OCT frame:`, error);
-          throw error;
-        }
-      }
-
-      // Switch frame slider to OCT frame mode
-      function switchToOCTFrameMode(viewportNumber, eye, frameType, currentFrame) {
-        const data = viewportData[viewportNumber];
-        if (!data || !data.dicom_file_path) return;
-
-        // Get OCT frame count for this eye and type
-        const eyeData = data[eye === "left" ? "left_eye_data" : "right_eye_data"];
-        const frameList = frameType === "flattened" ? eyeData.flattened_oct : eyeData.original_oct;
-        const totalFrames = frameList.length;
-
-        if (totalFrames > 0) {
-          // Set OCT frame mode
-          data.octFrameMode = true;
-          data.octFrameEye = eye;
-          data.octFrameType = frameType;
-          
-          // Update total frames for this viewport
-          totalFrames[viewportNumber] = totalFrames;
-          
-          // Update current frame
-          currentFrames[viewportNumber] = currentFrame;
-          
-          // Update frame slider
-          setupFrameSlider(viewportNumber);
-          
-          // Update frame info display
-          updateFrameInfo(viewportNumber, currentFrame);
-          
-          console.log(`Switched viewport ${viewportNumber} to OCT frame mode: ${totalFrames} frames, current: ${currentFrame}, type: ${frameType}`);
-        }
-      }
-
-      // Load OCT frame from slider navigation
-      async function loadOCTFrameFromSlider(viewportNumber, frameNumber) {
-        const data = viewportData[viewportNumber];
-        if (!data || !data.octFrameMode) {
-          console.error("Not in OCT frame mode for viewport", viewportNumber);
-          return;
         }
 
-        const eye = data.octFrameEye;
-        const frameType = data.octFrameType;
-        const dicomFilePath = data.dicom_file_path;
-
-        console.log(`Loading OCT frame ${frameNumber} from slider for ${eye} eye (${frameType})`);
-
-        try {
-          await loadOCTFrame(viewportNumber, eye, frameNumber, dicomFilePath, frameType);
-          
-          // Update current frame
-          currentFrames[viewportNumber] = frameNumber;
-          
-          // Update frame info
-          updateFrameInfo(viewportNumber, frameNumber);
-          
-        } catch (error) {
-          console.error("Error loading OCT frame from slider:", error);
-          throw error;
-        }
+        console.log(`Selected original OCT frame ${frameIndex} (${fileName}) in ${eye} eye tree`);
       }
 
       // Select file in hierarchical eye tree
@@ -7441,65 +8195,6 @@
         selectEyeTreeFile(eye, "oct", index, `file_${index}`);
       }
 
-      // Validate E2E separation for debugging
-      async function validateE2ESeparation(eye) {
-        const viewportNumber = eye === "left" ? 1 : 2;
-        const data = viewportData[viewportNumber];
-        
-        if (!data || !data.dicom_file_path) {
-          alert("No E2E data available for validation");
-          return;
-        }
-
-        try {
-          console.log(`Validating E2E separation for ${eye} eye...`);
-          
-          const response = await fetch(`/api/validate_e2e_separation?dicom_file_path=${encodeURIComponent(data.dicom_file_path)}`);
-          
-          if (!response.ok) {
-            throw new Error(`Validation failed: ${response.statusText}`);
-          }
-          
-          const validationResult = await response.json();
-          
-          console.log("E2E Separation Validation Result:", validationResult);
-          
-          // Create a detailed validation report
-          let report = `=== E2E Separation Validation Report ===\n\n`;
-          report += `File: ${validationResult.file_key}\n`;
-          report += `Total Images: ${validationResult.total_images}\n\n`;
-          
-          report += `Fundus Images: ${validationResult.fundus_images.count}\n`;
-          report += `Keys: ${validationResult.fundus_images.keys.join(', ')}\n\n`;
-          
-          report += `OCT Original Images: ${validationResult.oct_original_images.count}\n`;
-          report += `Keys: ${validationResult.oct_original_images.keys.join(', ')}\n\n`;
-          
-          report += `OCT Flattened Images: ${validationResult.oct_flattened_images.count}\n`;
-          report += `Keys: ${validationResult.oct_flattened_images.keys.join(', ')}\n\n`;
-          
-          if (validationResult.misclassified_images.length > 0) {
-            report += `⚠️ MISCLASSIFIED IMAGES:\n`;
-            validationResult.misclassified_images.forEach(item => {
-              report += `- ${item.key}: ${item.issue}\n`;
-            });
-            report += `\n`;
-          }
-          
-          report += `Validation Passed: ${validationResult.validation_passed ? '✅ YES' : '❌ NO'}\n`;
-          
-          // Show the report in an alert (you might want to create a modal for better display)
-          alert(report);
-          
-          // Also log to console for detailed inspection
-          console.log("Detailed validation report:", report);
-          
-        } catch (error) {
-          console.error("Error validating E2E separation:", error);
-          alert(`Validation error: ${error.message}`);
-        }
-      }
-
       // Eye Focus Menu Functions
       function toggleEyeFocusMenu() {
         const menu = document.getElementById('eyeFocusDropdownMenu');
@@ -7523,54 +8218,6 @@
         if (!eyeFocusMenu.contains(event.target)) {
           menu.classList.remove('show');
           burger.classList.remove('active');
-        }
-      });
-
-      // Keyboard shortcuts for frame navigation
-      document.addEventListener('keydown', function(event) {
-        // Only handle keyboard shortcuts if not typing in an input field
-        if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
-          return;
-        }
-
-        // Get the currently focused viewport (you might want to implement viewport focus tracking)
-        let activeViewport = 1; // Default to viewport 1
-        
-        // Check if viewport 2 has focus (you can implement this based on your UI logic)
-        // For now, we'll use viewport 1 as default
-        
-        switch (event.key) {
-          case 'ArrowLeft':
-            event.preventDefault();
-            previousFrame(activeViewport);
-            break;
-          case 'ArrowRight':
-            event.preventDefault();
-            nextFrame(activeViewport);
-            break;
-          case 'Home':
-            event.preventDefault();
-            // Jump to first frame
-            const firstFrame = 0;
-            const data = viewportData[activeViewport];
-            if (data && data.octFrameMode) {
-              loadOCTFrameFromSlider(activeViewport, firstFrame);
-            } else {
-              loadFrame(activeViewport, firstFrame);
-            }
-            break;
-          case 'End':
-            event.preventDefault();
-            // Jump to last frame
-            const totalFramesCount = totalFrames[activeViewport] || 0;
-            const lastFrame = Math.max(0, totalFramesCount - 1);
-            const data2 = viewportData[activeViewport];
-            if (data2 && data2.octFrameMode) {
-              loadOCTFrameFromSlider(activeViewport, lastFrame);
-            } else {
-              loadFrame(activeViewport, lastFrame);
-            }
-            break;
         }
       });
 
