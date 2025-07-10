@@ -2401,11 +2401,37 @@ def process_fda_file(file_path: str, key: str, crc: str):
             stored_images[key]["middle_frame_pixels"] = pixel_data[middle_frame_index].copy()
             logger.info(f"Stored middle frame pixels for FDA flattening with shape: {pixel_data[middle_frame_index].shape}")
 
-        # Process each frame
-        logger.info(f"Processing {number_of_frames} frame(s)")
+        # --- Parallel frame processing for multi-frame FDA files ---
+        logger.info(f"Processing {number_of_frames} frame(s) in parallel (except median)")
+        frame_indices = list(range(number_of_frames))
+        if number_of_frames > 1:
+            median_idx = number_of_frames // 2
+            frames_to_process = [i for i in frame_indices if i != median_idx]
+        else:
+            frames_to_process = frame_indices
+
+        processed_frames = {}
+        if number_of_frames > 1:
+            logger.info(f"Starting parallel processing of {len(frames_to_process)} frames (excluding median index {median_idx})")
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                future_to_idx = {
+                    executor.submit(process_frame_parallel, pixel_data[idx], idx): idx for idx in frames_to_process
+                }
+                for future in as_completed(future_to_idx):
+                    idx, processed_frame = future.result()
+                    processed_frames[idx] = processed_frame
+            logger.info(f"Parallel processing complete. Processed {len(processed_frames)} frames. Adding median frame (index {median_idx}) to results.")
+            processed_frames[median_idx] = pixel_data[median_idx] if len(pixel_data.shape) == 3 else pixel_data
+        else:
+            logger.info("Single frame FDA detected. No parallel processing needed.")
+            processed_frames[0] = pixel_data if len(pixel_data.shape) == 2 else pixel_data[0]
+
+        # Store processed frames as PNGs in stored_images for better quality and consistency
         for frame in range(number_of_frames):
             try:
-                img = convert_dicom_to_image(pixel_data, frame)
+                img_data = processed_frames[frame]
+                img = convert_dicom_to_image(img_data, 0)  # Already 2D
                 img_byte_arr = io.BytesIO()
                 img.save(img_byte_arr, format='PNG')  # Use PNG for better quality and consistency
                 img_byte_arr.seek(0)
